@@ -6,7 +6,11 @@ Pocket Near is a Telegram Mini App companion for NEAR Intents. It connects to a 
 
 The app never asks for, receives, or stores a wallet private key. Telegram launch data is HMAC-verified by the API before a short-lived, HttpOnly session cookie is issued. Policy data is canonicalized, signed by the connected wallet, and verified server-side with `near-api-js`. A separate unlock password is stored as a scrypt hash with a random salt.
 
-**Unattended settlement is intentionally disabled.** The Verifier's registered Intents keys are authorized to sign intents for the account and can add or remove other keys. The published 1Click quote flow returns a deposit address; it does not confer a spend authorization on Pocket Near. The app therefore evaluates policies and selects quotes but requires a wallet authorization for every on-chain action. It does not store an agent key, and its API responds with a clear rejection if an unattended execution is requested. Do not deploy this MVP as an autonomous asset manager.
+**No NEAR AI or free-form trading chat is used.** The deterministic `packages/shared` `checkPolicy()` evaluator is the hard policy source of truth. A worker fetches quotes for signed allowed pairs, rechecks policy and usage, then sends a Telegram approval prompt. A configured TEE signer must recheck policy before it signs. Auto mode is a stored user preference gated by the unlock password; it does not bypass the signing or settlement boundaries below.
+
+The security boundary is: wallet signs policy → PostgreSQL stores its signed envelope → API/worker evaluates quotes with `checkPolicy()` → Telegram user approves → API re-fetches stored quote and rechecks → TEE endpoint validates policy again and signs. The API host never stores a full wallet private key. The current 1Click quote flow yields a deposit address and this repository does not implement the Intents deposit/submission lifecycle. A TEE signature alone is not settlement, so this deployment records a signed preview and explicitly refuses to report a submitted/successful swap. Do not enable unattended execution for production funds until a reviewed, protocol-compatible submission path and enclave deployment exist.
+
+The optional HTTP signer contract is `POST TEE_SIGNER_URL` with `{policy, quote, usage, intentPayload}` and expects `{signature, attestation?}`. Configure the URL to a Phala Shade or OutLayer enclave HTTP endpoint that implements this contract, performs `checkPolicy()` (or a faithful independently audited equivalent) inside the enclave, verifies the caller and payload, and keeps the limited key within the enclave. `TEE_SIGNER_API_KEY` is sent as a Bearer credential. Pointing this variable at an ordinary API does not create a TEE. The development signer is explicitly DEV-ONLY, only signs an envelope using `DEV_ENCLAVE_PRIVATE_KEY` when `NODE_ENV=development`, and does not submit transactions.
 
 Application policy checks are enforced in the API and are not a smart-contract restriction. A compromised application server could bypass those checks. For unattended execution, an independently audited, protocol-enforced scoped authorization or smart account is required; a function-call key to an unrestricted token or verifier method is not a safe substitute.
 
@@ -86,10 +90,18 @@ PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelope
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed by CORS |
 | `QUOTE_CACHE_TTL_SECONDS` | Maximum quote-cache age; cached quotes are marked stale and cannot pass policy checks |
 | `MAX_INIT_DATA_AGE_SECONDS` | Maximum Telegram launch-data age |
+| `AGENT_WORKER_ENABLED` | Enable the PostgreSQL-backed Telegram quote worker (`true`/`false`, default false) |
+| `AGENT_WORKER_INTERVAL_MS` | Worker polling interval, 5,000–300,000 ms |
+| `TEE_SIGNER_ENABLED` | Enable signer requests; disabled means execute fails closed |
+| `TEE_SIGNER_URL` | HTTPS endpoint implementing the enclave signer contract |
+| `TEE_SIGNER_API_KEY` | Optional Bearer credential for the signer endpoint |
+| `DEV_ENCLAVE_PRIVATE_KEY` | Development-only signing secret; ignored outside `NODE_ENV=development` |
 
 ## Implemented
 
-- Telegraf `/start`, `/help`, `/status`, and `/freeze` commands with a Mini App button.
+- Telegraf `/start`, `/help`, `/status`, `/freeze`, `/agent on|off`, approval, and rejection controls with a Mini App button.
+- Optional backend quote worker for enabled users, with policy/usage checks, preview audit records, deduplicated Telegram alerts, and inline approval/rejection buttons.
+- Provider-agnostic TEE signer interface with fail-closed HTTP integration and a development-only envelope signer.
 - Telegram `initData` authentication, HttpOnly session cookie, rate limiting, and wallet ownership proof.
 - HOT Labs NEAR Connect wallet integration; policy signing and API verification use NEP-413.
 - Live supported-asset list and 1Click quote integration through the official TypeScript SDK.

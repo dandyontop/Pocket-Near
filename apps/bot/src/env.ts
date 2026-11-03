@@ -15,5 +15,11 @@ const schema = z.object({
   ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),
   QUOTE_CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(300).default(20),
   MAX_INIT_DATA_AGE_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+  AGENT_WORKER_ENABLED: z.string().default("false").transform(v=>v.toLowerCase()==="true"),
+  AGENT_WORKER_INTERVAL_MS: z.coerce.number().int().min(5000).max(300000).default(30000),
+  TEE_SIGNER_ENABLED: z.string().default("false").transform(v=>v.toLowerCase()==="true"),
+  TEE_SIGNER_URL: z.preprocess(v=>v===""?undefined:v,z.string().url().optional()),
+  TEE_SIGNER_API_KEY: z.string().default(""),
+  DEV_ENCLAVE_PRIVATE_KEY: z.string().default(""),
 });
 export const env = schema.parse(process.env);

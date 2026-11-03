@@ -12,6 +12,7 @@ import { env } from "./env.js";
 import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
 import { verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
 import { fetchLiveQuote } from "./quotes.js";
+import { teeSigner } from "./tee/signer.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app = express();
@@ -72,8 +73,15 @@ app.post("/api/auth/dev",loginRate,asyncRoute(async(_req,res)=>{
 }));
 app.post("/api/auth/logout",(_req,res) => { res.clearCookie(cookieName,{ path:"/api", sameSite:"strict", secure:env.COOKIE_SECURE }); res.status(204).end(); });
 app.get("/api/auth/me",requireSession,asyncRoute(async (req,res) => {
-  const { rows } = await pool.query("SELECT account_id,(password_hash IS NOT NULL) AS password_set FROM users WHERE id=$1",[req.userId]);
-  res.json({ accountId:rows[0]?.account_id ?? null,passwordSet:rows[0]?.password_set ?? false });
+  const { rows } = await pool.query("SELECT account_id,(password_hash IS NOT NULL) AS password_set,agent_enabled,auto_enabled FROM users WHERE id=$1",[req.userId]);
+  res.json({ accountId:rows[0]?.account_id ?? null,passwordSet:rows[0]?.password_set ?? false,agentEnabled:rows[0]?.agent_enabled??false,autoEnabled:rows[0]?.auto_enabled??false });
+}));
+app.put("/api/agent/settings",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({agentEnabled:z.boolean().optional(),autoEnabled:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.autoEnabled!==undefined).parse(req.body);
+  if(body.autoEnabled!==undefined&&!await requirePassword(req,body.password))return fail(res,403,"A valid password is required to change auto mode.");
+  if(body.agentEnabled!==undefined)await pool.query("UPDATE users SET agent_enabled=$1,updated_at=now() WHERE id=$2",[body.agentEnabled,req.userId]);
+  if(body.autoEnabled!==undefined)await pool.query("UPDATE users SET auto_enabled=$1,updated_at=now() WHERE id=$2",[body.autoEnabled,req.userId]);
+  const row=await pool.query("SELECT agent_enabled,auto_enabled FROM users WHERE id=$1",[req.userId]);res.json(row.rows[0]);
 }));
 app.post("/api/wallet/challenge",requireSession,asyncRoute(async(req,res)=>{
   const {accountId}=z.object({accountId:z.string().min(2).max(128)}).parse(req.body);
@@ -194,10 +202,14 @@ app.post("/api/agent/execute",requireSession,asyncRoute(async (req,res) => {
   if(!rows[0]?.active)return fail(res,409,"No active signed policy is available.");
   const p=policySchema.parse(rows[0].body);
   const usage=await pool.query<{day_amount:string;week_amount:string}>(`SELECT COALESCE(sum((details->>'amountIn')::numeric) FILTER(WHERE created_at::date=now()::date),0)::text AS day_amount,COALESCE(sum((details->>'amountIn')::numeric) FILTER(WHERE created_at>=date_trunc('week',now())),0)::text AS week_amount FROM execution_events WHERE user_id=$1 AND event_type IN ('submitted','success')`,[req.userId]);
-  const d=checkPolicy(p,{dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey:new Date().toISOString().slice(0,10),weekKey:"current"},quote);
+  const now=new Date(),dayKey=now.toISOString().slice(0,10),weekKey=`${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
+  const usageValue={dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey,weekKey};
+  const d=checkPolicy(p,usageValue,quote,now);
   if(!d.allowed){await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'blocked',$2)",[req.userId,JSON.stringify({quoteId:quote.id,reason:d.reason})]);return fail(res,403,d.reason);}
-  await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({quoteId:quote.id,requiresWalletSignature:true})]);
-  res.status(409).json({error:"Policy passed, but Pocket Near does not hold a delegated signer. The NEAR Intents Verifier treats every registered key as fully authorized; the app cannot safely execute in the background under the requested limited-grant guarantee. Confirm the action directly in your wallet.",requiresWalletSignature:true});
+  const result=await teeSigner.signIntent({policy:p,quote,usage:usageValue,intentPayload:quote.raw});
+  if(result.error||!result.signature){await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'failed',$2)",[req.userId,JSON.stringify({quoteId:quote.id,reason:result.error??"TEE returned no signature"})]);return fail(res,503,result.error??"TEE signing failed.");}
+  await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({quoteId:quote.id,signed:true,submitted:false,attestation:result.attestation??null})]);
+  res.status(409).json({error:"TEE signed the intent payload, but this deployment has no supported NEAR Intents submission flow. No funds were moved; review and complete the quote in your wallet.",requiresWalletSignature:true,signed:true,attestation:result.attestation??null});
 }));
 
 app.get("/api/events",requireSession,asyncRoute(async (req,res) => {

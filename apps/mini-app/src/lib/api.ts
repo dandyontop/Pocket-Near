@@ -9,7 +9,8 @@ async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   return data;
 }
 export const api={
-  me:()=>request<{accountId:string|null,passwordSet:boolean}>("/api/auth/me"),
+  me:()=>request<{accountId:string|null,passwordSet:boolean;agentEnabled:boolean;autoEnabled:boolean}>("/api/auth/me"),
+  agentSettings:(data:{agentEnabled?:boolean;autoEnabled?:boolean;password?:string})=>request<{agent_enabled:boolean;auto_enabled:boolean}>("/api/agent/settings",{method:"PUT",body:JSON.stringify(data)}),
   login:(initData:string)=>request<{authenticated:boolean}>("/api/auth/telegram",{method:"POST",body:JSON.stringify({initData})}),
   walletChallenge:(accountId:string)=>request<{message:string;recipient:string;nonce:string}>("/api/wallet/challenge",{method:"POST",body:JSON.stringify({accountId})}),
   walletVerify:(envelope:unknown)=>request<{accountId:string}>("/api/wallet/verify",{method:"POST",body:JSON.stringify(envelope)}),

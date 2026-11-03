@@ -8,6 +8,7 @@ export async function migrate(): Promise<void> {
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL,
       account_id TEXT, password_salt TEXT, password_hash TEXT,
+      agent_enabled BOOLEAN NOT NULL DEFAULT false, auto_enabled BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS policies (
@@ -30,5 +31,7 @@ export async function migrate(): Promise<void> {
       details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_enabled BOOLEAN NOT NULL DEFAULT false;
   `);
 }

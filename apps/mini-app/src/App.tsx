@@ -25,6 +25,7 @@ export default function App(){
   const [notice,setNotice]=useState("");
   const [busy,setBusy]=useState(false);
   const [agentOn,setAgentOn]=useState(false);
+  const [autoOn,setAutoOn]=useState(false);
   const [quote,setQuote]=useState<QuoteView|null>(null);
   const [decision,setDecision]=useState<{allowed:boolean;reason?:string}|null>(null);
   const [events,setEvents]=useState<Array<{event_type:string;details:Record<string,unknown>;created_at:string}>>([]);
@@ -47,6 +48,7 @@ export default function App(){
   const loadDashboard=useCallback(async()=>{
     const me=await api.me();
     setPasswordSet(me.passwordSet);
+    setAgentOn(me.agentEnabled);setAutoOn(me.autoEnabled);
     if(me.accountId)setAccount({accountId:me.accountId});
     const [assetData,policyData,eventData]=await Promise.all([api.assets(),api.policy(),api.events()]);
     const sorted=assetData.assets.sort((a,b)=>a.symbol.localeCompare(b.symbol));
@@ -129,7 +131,8 @@ export default function App(){
   const runAgent=async()=>{setError("");setBusy(true);try{const fresh=await fetchQuote();if(fresh){const result=await api.evaluate(fresh.id,true);setDecision(result.decision);setShowUnlock(true);}}catch(e){setError(e instanceof Error?e.message:"Could not evaluate this request.");}finally{setBusy(false);}};
   const confirmAction=async()=>{if(!quote)return;setBusy(true);setError("");try{await api.execute(quote.id,unlock);setNotice("Wallet confirmation is required for every on-chain action.");}catch(e){setError(e instanceof Error?e.message:"Action could not be prepared.");}finally{setBusy(false);setShowUnlock(false);}};
   const refreshEvents=async()=>{try{setEvents((await api.events()).events);}catch(e){setError(e instanceof Error?e.message:"Could not refresh activity.");}};
-  const safeToggleAgent=()=>{if(!policy){setError("Sign a policy before activating the agent.");setTab("Policy");return;}if(policy.freeze){setError("Emergency freeze is active. Sign an updated policy to resume.");return;}setAgentOn(v=>!v);setNotice(agentOn?"Agent paused.":"Agent watching live quotes.");};
+  const safeToggleAgent=async()=>{if(!policy){setError("Sign a policy before activating the agent.");setTab("Policy");return;}if(policy.freeze){setError("Emergency freeze is active. Sign an updated policy to resume.");return;}try{const next=!agentOn;await api.agentSettings({agentEnabled:next});setAgentOn(next);setNotice(next?"Agent monitoring. Matches are notified on Telegram.":"Agent paused.");}catch(e){setError(e instanceof Error?e.message:"Could not update agent state.");}};
+  const toggleAuto=async()=>{if(!unlock){setError("Enter your unlock password to change auto mode.");return;}try{const next=!autoOn;const settings=await api.agentSettings({autoEnabled:next,password:unlock});setAutoOn(settings.auto_enabled);setUnlock("");setNotice(next?"Auto mode enabled.":"Auto mode disabled.");}catch(e){setError(e instanceof Error?e.message:"Could not update auto mode.");}};
 
   if(loading)return <main className="splash"><div className="brandmark">pn</div><span className="loader"/><p>Opening your pocket…</p></main>;
   return <div className="app-shell">
@@ -155,7 +158,7 @@ export default function App(){
           {!quote&&<div className="quote-empty"><Activity size={18}/><span>{account?"Request a quote to see current solver pricing":"Connect a wallet to request a quote"}</span></div>}
         </section>
 
-        <section className={`agent-card ${agentOn?"active":""}`}><div className="agent-head"><div className="agent-orb"><Bot size={20}/></div><div className="agent-title"><span>POLICY AGENT</span><strong>{agentOn?"Watching for matches":"Agent is paused"}</strong></div><button className={`toggle ${agentOn?"on":""}`} onClick={safeToggleAgent} aria-label={agentOn?"Pause agent":"Start agent"}><i/></button></div><p className="agent-copy">The agent checks live quotes against your signed limits. It will never move funds without an in-wallet authorization.</p><div className="agent-footer"><span><i className={agentOn?"green":"gray"}/>{agentOn?"MONITORING":"IDLE"}</span><button onClick={()=>setTab("Policy")}>Review policy <ArrowRight size={14}/></button></div></section>
+        <section className={`agent-card ${agentOn?"active":""}`}><div className="agent-head"><div className="agent-orb"><Bot size={20}/></div><div className="agent-title"><span>POLICY AGENT</span><strong>{agentOn?"Watching for matches":"Agent is paused"}</strong></div><button className={`toggle ${agentOn?"on":""}`} onClick={()=>void safeToggleAgent()} aria-label={agentOn?"Pause agent":"Start agent"}><i/></button></div><p className="agent-copy">The backend checks quotes while you are away. Matches are notified on Telegram for approval.</p><div className="agent-footer"><span><i className={agentOn?"green":"gray"}/>{agentOn?"MONITORING":"IDLE"}</span><button onClick={()=>setTab("Policy")}>Review policy <ArrowRight size={14}/></button></div><div className="agent-footer"><span>Auto execution: {autoOn?"on":"off"}</span><button onClick={()=>void toggleAuto()}>{autoOn?"Turn off":"Turn on auto"}</button></div>{!autoOn&&<label className="field">Unlock password for auto mode<input type="password" value={unlock} onChange={e=>setUnlock(e.target.value)} autoComplete="current-password"/></label>}</section>
         <div className="section-heading compact"><div><p className="eyebrow">ACCOUNT SAFETY</p><h2>Your controls</h2></div></div>
         <section className="control-row"><div className="control-icon"><Fingerprint size={18}/></div><div><strong>Signed policy</strong><span>{policy?`${policy.allowedPairs.length} pair · ${(policy.maxSlippageBps/100).toFixed(2)}% slippage max`:"Set the agent's guardrails"}</span></div><button onClick={()=>setTab("Policy")}><ArrowRight size={16}/></button></section>
         <section className="control-row"><div className="control-icon warning"><ShieldAlert size={18}/></div><div><strong>Emergency freeze</strong><span>{policy?.freeze?"Agent is frozen":"Immediately pause all agent activity"}</span></div><button onClick={()=>void toggleFreeze()} disabled={!policy}><Pause size={15}/></button></section>
