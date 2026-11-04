@@ -16,7 +16,12 @@ import { teeSigner } from "./tee/signer.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app = express();
-const origins = new Set(env.ALLOWED_ORIGINS.split(",").map(v => v.trim()).filter(Boolean));
+const origins = new Set([
+  ...env.ALLOWED_ORIGINS.split(",").map(v => v.trim()).filter(Boolean),
+  new URL(env.PUBLIC_APP_URL).origin,
+  ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
+  ...(process.env.VERCEL_BRANCH_URL ? [`https://${process.env.VERCEL_BRANCH_URL}`] : []),
+]);
 const loginRate = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: "draft-8", legacyHeaders: false });
 const apiRate = rateLimit({ windowMs: 60_000, limit: 90, standardHeaders: "draft-8", legacyHeaders: false });
 const challenges = new Map<number,string>();

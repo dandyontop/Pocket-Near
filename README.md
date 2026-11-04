@@ -63,11 +63,25 @@ PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelope
 4. Configure Telegram:
 
    - In BotFather, set the bot's Mini App URL to your HTTPS `PUBLIC_APP_URL`.
-   - For webhook mode, set `TELEGRAM_WEBHOOK_URL` to a public HTTPS URL pointing at the API path (for example `https://api.example.com/telegram/webhook`) and set a random `TELEGRAM_WEBHOOK_SECRET`.
+   - For webhook mode, set `TELEGRAM_WEBHOOK_URL` to a public HTTPS URL pointing at the API path (for example `https://app.example.com/api/telegram/webhook`) and set a random `TELEGRAM_WEBHOOK_SECRET`.
    - For local bot testing, leave `TELEGRAM_WEBHOOK_URL` unset; the bot uses long polling when `NODE_ENV=development`.
    - Open the bot and press **Open Pocket Near**. The backend validates Telegram's `initData`; browser preview uses the development-only session route.
 
 5. Connect a wallet, set an unlock password, choose assets and limits in **Policy**, and sign the policy with the wallet. Request quotes from **Overview**. The agent can poll live quotes while the Mini App is open and report whether each is inside the signed policy. Any on-chain transaction must still be approved in the wallet.
+
+## Deploying to Vercel
+
+The root `vercel.json` defines two services: the Vite Mini App and the Express API. `/api/*` is routed to the API; all other paths are routed to the Mini App. The frontend uses same-origin `/api` requests in production, so do not set `VITE_API_URL` for Vercel deployments. The API's `PUBLIC_APP_URL` origin and Vercel's deployment URL are allowed by CORS; add any other custom frontend origins to `ALLOWED_ORIGINS`.
+
+Configure these project environment variables in Vercel:
+
+- `PUBLIC_APP_URL`: the HTTPS URL of the Mini App, including its custom domain if applicable.
+- `DATABASE_URL` and `SESSION_SECRET`: required by the API; use a managed PostgreSQL database and a randomly generated secret of at least 32 characters.
+- `COOKIE_SECURE=true` and `NODE_ENV=production`.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_URL` (`${PUBLIC_APP_URL}/api/telegram/webhook`), and `TELEGRAM_WEBHOOK_SECRET` when enabling Telegram webhooks.
+- `DATABASE_SSL=true` when required by the PostgreSQL provider.
+
+Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; the API does not use Telegram long polling in production and should receive updates through the webhook URL instead. The API initializes its database schema on startup.
 
 ## Environment variables
 

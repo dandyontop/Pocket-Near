@@ -1,0 +1,29 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "api": {
+      "root": "apps/bot",
+      "framework": "express",
+      "installCommand": "npm ci --prefix ../.. && npm --prefix ../.. run build:shared"
+    },
+    "mini-app": {
+      "root": "apps/mini-app",
+      "framework": "vite",
+      "installCommand": "npm ci --prefix ../.. && npm --prefix ../.. run build:shared"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "api"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "mini-app"
+      }
+    }
+  ]
+}

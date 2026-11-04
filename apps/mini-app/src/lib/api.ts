@@ -1,6 +1,6 @@
 import type { AgentPolicy, Asset, QuoteInput, QuoteView } from "../../../../packages/shared/dist/index.js";
 
-const API = import.meta.env.VITE_API_URL ?? "";
+const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const response=await fetch(`${API}${path}`,{...init,credentials:"include",headers:{"content-type":"application/json",...init.headers}});
   if(response.status===204)return undefined as T;
