@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "description": "Non-custodial NEAR Intents companion for Telegram",
   "scripts": {
     "build:shared": "npm run build --prefix packages/shared",
@@ -14,8 +18,42 @@
     "db:migrate": "npm run db:migrate --prefix apps/bot"
   },
   "dependencies": {
-    "@defuse-protocol/one-click-sdk-typescript":"^0.1.16","@hot-labs/near-connect":"^0.12.0","@telegram-apps/sdk-react":"^3.3.9","compression":"^1.8.0","concurrently":"^9.1.2","cookie-parser":"^1.4.7","cors":"^2.8.5","dotenv":"^16.5.0","express":"^5.1.0","express-rate-limit":"^7.5.0","helmet":"^8.1.0","jose":"^6.0.11","lucide-react":"^0.468.0","near-api-js":"^7.3.1","pg":"^8.15.6","react":"^19.1.0","react-dom":"^19.1.0","telegraf":"^4.16.3","zod":"^3.25.28"
+    "@defuse-protocol/one-click-sdk-typescript": "^0.1.16",
+    "@hot-labs/near-connect": "^0.12.0",
+    "@telegram-apps/sdk-react": "^3.3.9",
+    "compression": "^1.8.0",
+    "concurrently": "^9.1.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.1.0",
+    "jose": "^6.0.11",
+    "lucide-react": "^0.468.0",
+    "near-api-js": "^7.3.1",
+    "pg": "^8.15.6",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "telegraf": "^4.16.3",
+    "zod": "^3.25.28"
   },
-  "devDependencies": { "@types/compression":"^1.7.5","@types/cookie-parser":"^1.4.8","@types/cors":"^2.8.17","@types/express":"^5.0.1","@types/node":"^22.15.30","@types/pg":"^8.15.2","@types/react":"^19.1.6","@types/react-dom":"^19.1.6","@vitejs/plugin-react":"^4.5.0","tsx":"^4.19.4","typescript":"^5.8.3","vite":"^6.3.5" },
-  "engines": { "node": ">=20.11" }
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.30",
+    "@types/pg": "^8.15.2",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.5.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "esbuild": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
 }

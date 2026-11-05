@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { checkPolicy, policySchema, type AgentPolicy, type PolicyUsage, type QuoteView } from "../../../../packages/shared/dist/index.js";
+import { checkPolicy, policySchema, type AgentPolicy, type PolicyUsage, type QuoteView } from "@pocket-near/shared";
 import { env } from "../env.js";
 
 export interface SignIntentInput { policy: AgentPolicy; quote: QuoteView; usage: PolicyUsage; intentPayload: unknown }

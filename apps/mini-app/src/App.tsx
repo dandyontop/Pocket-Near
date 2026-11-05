@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, ArrowDownUp, ArrowRight, Bell, Bot, Check, ChevronDown, CircleHelp, Clock3, ExternalLink, Fingerprint, LockKeyhole, Pause, Play, Plus, RefreshCw, Shield, ShieldAlert, Sparkles, Wallet, X } from "lucide-react";
-import type { AgentPolicy, Asset, QuoteInput, QuoteView } from "../../../packages/shared/dist/index.js";
-import { canonicalPolicy } from "../../../packages/shared/dist/index.js";
+import type { AgentPolicy, Asset, QuoteInput, QuoteView } from "@pocket-near/shared";
+import { canonicalPolicy } from "@pocket-near/shared";
 import { api } from "./lib/api.js";
 import { connectWallet, disconnectWallet, getConnector, signPolicy, type WalletAccount } from "./lib/wallet.js";
 
