@@ -23,7 +23,12 @@ export const teeSigner:TeeSigner={async signIntent(input){
       if(!response.ok)return {error:`TEE signer returned HTTP ${response.status}.`};
       const parsed=resultSchema.safeParse(await response.json());
       if(!parsed.success)return {error:"TEE signer response was invalid."};
-      return parsed.data;
+      const {signature,attestation,error}=parsed.data;
+      return {
+        ...(signature!==undefined?{signature}:{}),
+        ...(attestation!==undefined?{attestation}:{}),
+        ...(error!==undefined?{error}:{}),
+      };
     }catch{return {error:"TEE signer is unreachable; execution is fail-closed."};}
   }
   if(env.NODE_ENV!=="development"||!env.DEV_ENCLAVE_PRIVATE_KEY)return {error:"TEE_SIGNER_URL is required outside development; DEV key is unavailable."};
