@@ -59,7 +59,7 @@ async function requirePassword(req: Request, supplied?: string): Promise<boolean
   return verifyPassword(password.data,row.rows[0].password_salt,row.rows[0].password_hash);
 }
 
-app.get("/api/health",(_req,res) => res.json({ ok:true, service:"pocket-near-api" }));
+app.get("/api/health",(_req,res) => res.json({ ok:true }));
 app.post("/api/auth/telegram",loginRate,asyncRoute(async (req,res) => {
   const data = z.object({ initData:z.string().min(1).max(8192) }).parse(req.body);
   try {
@@ -232,3 +232,4 @@ app.use((error: unknown,_req:Request,res:Response,_next:NextFunction) => {
 });
 
 export { app };
+export default app;

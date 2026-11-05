@@ -1,6 +1,7 @@
 {
   "name": "pocket-near",
   "private": true,
+  "type": "module",
   "version": "0.1.0",
   "description": "Non-custodial NEAR Intents companion for Telegram",
   "scripts": {

@@ -4,6 +4,7 @@
     "api": {
       "root": "apps/bot",
       "framework": "express",
+      "buildCommand": "npm run build",
       "installCommand": "npm ci --prefix ../.. && npm --prefix ../.. run build:shared"
     },
     "mini-app": {

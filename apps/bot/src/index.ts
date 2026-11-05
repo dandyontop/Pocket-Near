@@ -6,6 +6,7 @@ import { startAgentWorker } from "./agentWorker.js";
 import { policySchema, checkPolicy, type QuoteView } from "../../../packages/shared/dist/index.js";
 import { teeSigner } from "./tee/signer.js";
 
+async function start(): Promise<void> {
 await migrate();
 const server=app.listen(env.PORT,()=>console.info(`Pocket Near API listening on ${env.PORT}`));
 let bot:Telegraf|undefined;
@@ -77,3 +78,11 @@ const shutdown=async()=>{
 };
 process.once("SIGINT",()=>void shutdown());
 process.once("SIGTERM",()=>void shutdown());
+}
+
+if (!process.env.VERCEL) {
+  void start().catch(error => {
+    console.error("API startup failed", error);
+    process.exitCode = 1;
+  });
+}
