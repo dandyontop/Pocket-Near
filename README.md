@@ -71,7 +71,7 @@ PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelope
 
 ## Deploying to Vercel
 
-The root `vercel.json` defines two services: the Vite Mini App and the Express API. `/api/*` is routed to the API; all other paths are routed to the Mini App. The API service builds the TypeScript app into `dist/app.js`, and `apps/bot/app.js` is the ESM handler Vercel loads. Vercel requires `"type": "module"` in the root and API package metadata and a default export of the Express app; `src/index.ts` only starts migrations, the HTTP listener, and the bot outside Vercel serverless. The frontend uses same-origin `/api` requests in production, so do not set `VITE_API_URL` for Vercel deployments. The API's `PUBLIC_APP_URL` origin and Vercel's deployment URL are allowed by CORS; add any other custom frontend origins to `ALLOWED_ORIGINS`.
+The root `vercel.json` defines two services: the Vite Mini App and the Express API. `/api/*` is routed to the API; all other paths are routed to the Mini App. The API service bundles the TypeScript app (including `@pocket-near/shared`) with esbuild into a single ESM file, `dist/app.mjs`, and `apps/bot/server.mjs` is the explicit `entrypoint` Vercel loads. The `.mjs` extension keeps the function ESM regardless of which `package.json` ends up next to it; `src/index.ts` only starts migrations, the HTTP listener, and the bot outside Vercel serverless. The frontend uses same-origin `/api` requests in production, so do not set `VITE_API_URL` for Vercel deployments. The API's `PUBLIC_APP_URL` origin and Vercel's deployment URL are allowed by CORS; add any other custom frontend origins to `ALLOWED_ORIGINS`.
 
 Configure these project environment variables in Vercel:
 

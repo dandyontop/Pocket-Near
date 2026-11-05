@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { OneClickService, OpenAPI, QuoteRequest } from "@defuse-protocol/one-click-sdk-typescript";
-import { quoteInputSchema, type QuoteInput, type QuoteView } from "../../../packages/shared/dist/index.js";
+import { quoteInputSchema, type QuoteInput, type QuoteView } from "@pocket-near/shared";
 import { pool } from "./db.js";
 import { env } from "./env.js";
 

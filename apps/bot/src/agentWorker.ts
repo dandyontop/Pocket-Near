@@ -1,4 +1,4 @@
-import { checkPolicy, policySchema, type QuoteInput } from "../../../packages/shared/dist/index.js";
+import { checkPolicy, policySchema, type QuoteInput } from "@pocket-near/shared";
 import { pool } from "./db.js";
 import { fetchLiveQuote } from "./quotes.js";
 

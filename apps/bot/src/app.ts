@@ -6,7 +6,7 @@ import compression from "compression";
 import cookieParser from "cookie-parser";
 import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
-import { canonicalPolicy, checkPolicy, policySchema, quoteInputSchema, type QuoteView } from "../../../packages/shared/dist/index.js";
+import { canonicalPolicy, checkPolicy, policySchema, quoteInputSchema, type QuoteView } from "@pocket-near/shared";
 import { pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";

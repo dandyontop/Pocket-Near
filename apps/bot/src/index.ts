@@ -3,7 +3,7 @@ import { app } from "./app.js";
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { startAgentWorker } from "./agentWorker.js";
-import { policySchema, checkPolicy, type QuoteView } from "../../../packages/shared/dist/index.js";
+import { policySchema, checkPolicy, type QuoteView } from "@pocket-near/shared";
 import { teeSigner } from "./tee/signer.js";
 
 async function start(): Promise<void> {
