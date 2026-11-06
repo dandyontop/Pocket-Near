@@ -71,12 +71,12 @@ PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelope
 
 ## Deploying to Vercel
 
-The root `vercel.json` defines two services: the Vite Mini App and the Express API. `/api/*` is routed to the API; all other paths are routed to the Mini App. The API service bundles the TypeScript app (including `@pocket-near/shared`) with esbuild into a single ESM file, `dist/app.mjs`, and `apps/bot/server.mjs` is the explicit `entrypoint` Vercel loads. The `.mjs` extension keeps the function ESM regardless of which `package.json` ends up next to it; `src/index.ts` only starts migrations, the HTTP listener, and the bot outside Vercel serverless. The frontend uses same-origin `/api` requests in production, so do not set `VITE_API_URL` for Vercel deployments. The API's `PUBLIC_APP_URL` origin and Vercel's deployment URL are allowed by CORS; add any other custom frontend origins to `ALLOWED_ORIGINS`.
+The root `vercel.json` defines two services: the Vite Mini App and the Express API. `/api/*` is routed to the API; all other paths are routed to the Mini App. The API service bundles the TypeScript app (including `@pocket-near/shared`) with esbuild into a single ESM file, `dist/app.mjs`, and `apps/bot/server.mjs` is the explicit `entrypoint` Vercel loads. The `.mjs` extension keeps the function ESM regardless of which `package.json` ends up next to it. The API initializes its idempotent schema on the first request in each serverless instance under a PostgreSQL advisory lock; tables have RLS enabled and are accessed by the server through its private PostgreSQL connection. The frontend uses same-origin `/api` requests in production, so do not set `VITE_API_URL` for Vercel deployments. The API's `PUBLIC_APP_URL` origin and Vercel's deployment URL are allowed by CORS; add any other custom frontend origins to `ALLOWED_ORIGINS`.
 
 Configure these project environment variables in Vercel:
 
 - `PUBLIC_APP_URL`: the HTTPS URL of the Mini App, including its custom domain if applicable.
-- `DATABASE_URL` and `SESSION_SECRET`: required by the API; use a managed PostgreSQL database and a randomly generated secret of at least 32 characters.
+- Connect the Supabase project to Vercel. The API uses the integration's `POSTGRES_URL` when present, and falls back to `DATABASE_URL` for local or legacy deployments. `SESSION_SECRET` must be a random value of at least 32 characters.
 - `COOKIE_SECURE=true` and `NODE_ENV=production`.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_URL` (`${PUBLIC_APP_URL}/api/telegram/webhook`), and `TELEGRAM_WEBHOOK_SECRET` when enabling Telegram webhooks.
 - `DATABASE_SSL=true` when required by the PostgreSQL provider.
@@ -90,7 +90,8 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `NODE_ENV` | `development`, `test`, or `production` |
 | `PORT` | Express API port (default `8787`) |
 | `PUBLIC_APP_URL` | HTTPS Mini App URL used by the bot's web app button |
-| `DATABASE_URL` | PostgreSQL connection URL |
+| `DATABASE_URL` | PostgreSQL connection URL fallback; `POSTGRES_URL` takes precedence when provided by the Supabase Vercel integration |
+| `POSTGRES_URL` | PostgreSQL connection URL provided by the Supabase Vercel integration |
 | `DATABASE_SSL` | Enable TLS with certificate verification for PostgreSQL (`true`/`false`) |
 | `SESSION_SECRET` | At least 32 characters of random key material for session JWTs |
 | `COOKIE_SECURE` | Set `true` for HTTPS deployments |

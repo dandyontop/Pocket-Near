@@ -3,8 +3,15 @@ import { env } from "./env.js";
 
 export const pool = new pg.Pool({ connectionString: env.DATABASE_URL, ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : undefined, max: 12, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 });
 
-export async function migrate(): Promise<void> {
-  await pool.query(`
+let migrationPromise: Promise<void> | undefined;
+export function migrate(): Promise<void> {
+  if(migrationPromise)return migrationPromise;
+  migrationPromise=(async()=>{
+    const client=await pool.connect();
+    try{
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(1952542063,1)");
+      await client.query(`
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL,
       account_id TEXT, password_salt TEXT, password_hash TEXT,
@@ -33,5 +40,17 @@ export async function migrate(): Promise<void> {
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_enabled BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE live_quotes ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE execution_events ENABLE ROW LEVEL SECURITY;
   `);
+      await client.query("COMMIT");
+    }catch(error){
+      await client.query("ROLLBACK");
+      throw error;
+    }finally{client.release();}
+  })().catch(error=>{migrationPromise=undefined;throw error;});
+  return migrationPromise;
 }

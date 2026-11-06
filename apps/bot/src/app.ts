@@ -7,7 +7,7 @@ import cookieParser from "cookie-parser";
 import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
 import { canonicalPolicy, checkPolicy, policySchema, quoteInputSchema, type QuoteView } from "@pocket-near/shared";
-import { pool } from "./db.js";
+import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
 import { verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
@@ -16,6 +16,7 @@ import { teeSigner } from "./tee/signer.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app = express();
+if(process.env.VERCEL)app.set("trust proxy",1);
 const origins = new Set([
   ...env.ALLOWED_ORIGINS.split(",").map(v => v.trim()).filter(Boolean),
   new URL(env.PUBLIC_APP_URL).origin,
@@ -34,6 +35,7 @@ app.use(compression());
 app.use(cookieParser());
 app.use(express.json({ limit: "64kb", type: "application/json" }));
 app.use("/api",apiRate);
+app.use((_req,_res,next)=>{void migrate().then(()=>next(),next);});
 
 function fail(res: Response, status: number, message: string): void { res.status(status).json({ error: message }); }
 function asyncRoute(fn: (req: Request,res: Response,next: NextFunction) => Promise<unknown>) { return (req: Request,res: Response,next: NextFunction) => { void fn(req,res,next).catch(next); }; }
@@ -59,7 +61,7 @@ async function requirePassword(req: Request, supplied?: string): Promise<boolean
   return verifyPassword(password.data,row.rows[0].password_salt,row.rows[0].password_hash);
 }
 
-app.get("/api/health",(_req,res) => res.json({ ok:true }));
+app.get("/api/health",asyncRoute(async(_req,res)=>{await pool.query("SELECT 1");res.json({ok:true,database:"connected"});}));
 app.post("/api/auth/telegram",loginRate,asyncRoute(async (req,res) => {
   const data = z.object({ initData:z.string().min(1).max(8192) }).parse(req.body);
   try {
