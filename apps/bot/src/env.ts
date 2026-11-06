@@ -6,7 +6,7 @@ import { z } from "zod";
 const schema = z.object({
   NODE_ENV: z.enum(["development","test","production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(8787),
-  PUBLIC_APP_URL: z.string().url(), DATABASE_URL: z.string().default(""), POSTGRES_URL: z.string().default(""), DATABASE_SSL: z.string().default("false").transform(v=>v.toLowerCase()==="true"),
+  PUBLIC_APP_URL: z.string().url(), DATABASE_URL: z.string().default(""), POSTGRES_URL: z.string().default(""), DATABASE_SSL: z.string().default("false").transform(v=>v.toLowerCase()==="true"), DATABASE_SSL_CA: z.string().default(""),
   SESSION_SECRET: z.string().min(32), COOKIE_SECURE: z.string().default("false").transform(v=>v.toLowerCase()==="true"),
   TELEGRAM_BOT_TOKEN: z.string().default(""), TELEGRAM_WEBHOOK_SECRET: z.string().default(""), TELEGRAM_WEBHOOK_URL:z.preprocess(v=>v===""?undefined:v,z.string().url().optional()),
   ONE_CLICK_JWT: z.string().default(""), ONE_CLICK_BASE_URL: z.string().url().default("https://1click.chaindefuser.com"),

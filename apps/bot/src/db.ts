@@ -1,7 +1,18 @@
 import pg from "pg";
 import { env } from "./env.js";
 
-export const pool = new pg.Pool({ connectionString: env.DATABASE_URL, ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : undefined, max: 12, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 });
+const usingSupabaseUrl=Boolean(env.POSTGRES_URL);
+const connectionUrl=new URL(env.DATABASE_URL);
+const sslConfigured=usingSupabaseUrl||env.DATABASE_SSL||Boolean(env.DATABASE_SSL_CA);
+if(sslConfigured)for(const key of ["sslmode","sslrootcert","sslcert","sslkey"])connectionUrl.searchParams.delete(key);
+const ssl=env.DATABASE_SSL_CA
+  ? {ca:env.DATABASE_SSL_CA,rejectUnauthorized:true}
+  : usingSupabaseUrl
+    ? {rejectUnauthorized:false}
+    : env.DATABASE_SSL
+      ? {rejectUnauthorized:true}
+      : undefined;
+export const pool = new pg.Pool({ connectionString:sslConfigured?connectionUrl.toString():env.DATABASE_URL, ...(ssl?{ssl}:{}), max: 12, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 5_000 });
 
 let migrationPromise: Promise<void> | undefined;
 export function migrate(): Promise<void> {

@@ -79,7 +79,7 @@ Configure these project environment variables in Vercel:
 - Connect the Supabase project to Vercel. The API uses the integration's `POSTGRES_URL` when present, and falls back to `DATABASE_URL` for local or legacy deployments. `SESSION_SECRET` must be a random value of at least 32 characters.
 - `COOKIE_SECURE=true` and `NODE_ENV=production`.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_URL` (`${PUBLIC_APP_URL}/api/telegram/webhook`), and `TELEGRAM_WEBHOOK_SECRET` when enabling Telegram webhooks.
-- `DATABASE_SSL=true` when required by the PostgreSQL provider.
+- Supabase `POSTGRES_URL` connections always use TLS. Add the Supabase root CA certificate as `DATABASE_SSL_CA` to verify the server certificate; without it, the Supabase integration's `sslmode=require` behavior encrypts traffic but does not validate certificate identity. For other PostgreSQL URLs, `DATABASE_SSL=true` enables certificate verification.
 
 Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; the API does not use Telegram long polling in production and should receive updates through the webhook URL instead. The API initializes its database schema on startup.
 
@@ -92,7 +92,8 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `PUBLIC_APP_URL` | HTTPS Mini App URL used by the bot's web app button |
 | `DATABASE_URL` | PostgreSQL connection URL fallback; `POSTGRES_URL` takes precedence when provided by the Supabase Vercel integration |
 | `POSTGRES_URL` | PostgreSQL connection URL provided by the Supabase Vercel integration |
-| `DATABASE_SSL` | Enable TLS with certificate verification for PostgreSQL (`true`/`false`) |
+| `DATABASE_SSL` | Enable TLS with certificate verification for non-Supabase connection URLs (`true`/`false`) |
+| `DATABASE_SSL_CA` | Optional Supabase root CA certificate in PEM format; verifies the PostgreSQL server certificate |
 | `SESSION_SECRET` | At least 32 characters of random key material for session JWTs |
 | `COOKIE_SECURE` | Set `true` for HTTPS deployments |
 | `TELEGRAM_BOT_TOKEN` | BotFather token; absent disables bot startup |
