@@ -1,6 +1,6 @@
 # Pocket Near
 
-Pocket Near is a Telegram Mini App companion for NEAR Intents. It connects to a user's own NEAR wallet, verifies wallet ownership with NEP-413 signatures, keeps a signed policy in PostgreSQL, and displays solver quotes from 1Click and the Solver Relay.
+Pocket Near is a Telegram-native NEAR super-pocket. Its Mini App has Move, Prices, Earn, Explore, and Agents tabs. It connects to a user's own NEAR wallet, verifies wallet ownership with NEP-413 signatures, stores signed policies in PostgreSQL, and displays quotes from 1Click and the Solver Relay.
 
 ## Security boundary
 
@@ -24,7 +24,9 @@ packages/
   shared/    Runtime schemas, policy evaluator, shared types
 ```
 
-PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelopes, short-lived quote cache entries, and audit events. Secrets are loaded only from environment variables.
+PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelopes, short-lived quote cache entries, audit events, price watchlists and alerts, alert deduplication records, and optional discover-open events. Secrets are loaded only from environment variables.
+
+The five tabs share one authenticated Mini App session. Prices use CoinGecko's public markets endpoint (optional demo key) with a 45-second default cache. Earn data uses DefiLlama and falls back to curated NEAR protocols when unavailable. Explore combines a curated catalog with available DefiLlama TVL and outbound-only game links. Agent Market actions link to `market.near.ai`; Pocket Near does not reproduce its listing or escrow system. Telegram workers only run in a persistent bot process; Vercel serverless functions do not keep intervals alive.
 
 ## Requirements
 
@@ -67,7 +69,16 @@ PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelope
    - For local bot testing, leave `TELEGRAM_WEBHOOK_URL` unset; the bot uses long polling when `NODE_ENV=development`.
    - Open the bot and press **Open Pocket Near**. The backend validates Telegram's `initData`; browser preview uses the development-only session route.
 
-5. Connect a wallet, set an unlock password, choose assets and limits in **Policy**, and sign the policy with the wallet. Request quotes from **Overview**. The agent can poll live quotes while the Mini App is open and report whether each is inside the signed policy. Any on-chain transaction must still be approved in the wallet.
+5. Connect a wallet, set an unlock password, choose assets and limits in **Agents**, and sign the policy with the wallet. In **Move**, request a live quote and review the policy decision. Any on-chain transaction must still be approved in the wallet.
+
+## Five-minute demo
+
+1. Start PostgreSQL and run `npm run db:migrate`, then start the API and Mini App with `npm run dev`.
+2. Open the Mini App from Telegram (or the development browser session), then connect a NEAR wallet and verify the wallet challenge.
+3. In **Agents**, create an unlock password, choose a pair and limits, and sign the policy in the wallet. Turn on monitoring to enable quote previews; auto mode remains password-gated and does not submit swaps.
+4. In **Move**, enter an amount and destination/refund addresses for non-NEAR chains, request a quote, and inspect output, route, fees, expiry and policy decision. A blocked pair or limit should show a clear reason.
+5. In **Prices**, search assets, add a watchlist favorite, and create an alert. In a persistent bot deployment with `AGENT_WORKER_ENABLED=true`, `/prices` and `/alerts` work in Telegram and alert matches are sent at most once per alert per day.
+6. In **Earn** and **Explore**, inspect ranked protocols, curated apps and outbound game links. In **Agents**, use the marketplace and jobs links, export a policy template, and inspect recent events.
 
 ## Deploying to Vercel
 
@@ -112,6 +123,10 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `TEE_SIGNER_URL` | HTTPS endpoint implementing the enclave signer contract |
 | `TEE_SIGNER_API_KEY` | Optional Bearer credential for the signer endpoint |
 | `DEV_ENCLAVE_PRIVATE_KEY` | Development-only signing secret; ignored outside `NODE_ENV=development` |
+| `COINGECKO_API_KEY` | Optional CoinGecko demo API key to improve rate-limit headroom |
+| `PRICE_ASSET_IDS` | Comma-separated CoinGecko asset IDs for the default market list |
+| `PRICES_CACHE_TTL_SECONDS` | Price cache TTL, 30–60 seconds (default 45) |
+| `EARN_CACHE_TTL_SECONDS` | DefiLlama cache TTL, 300–900 seconds (default 600) |
 
 ## Implemented
 
@@ -126,13 +141,17 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 - Signed policy for an allowlisted asset pair and destination, per-trade/daily/weekly base-unit caps, time window, max slippage, and emergency freeze.
 - API-side policy checks on each agent evaluation, blocked-attempt audit records, password protection for policy changes, and quote polling while the Mini App remains open.
 - PostgreSQL persistence and production environment configuration.
+- Five-tab product surface: authenticated prices, watchlists, price alerts, DefiLlama NEAR protocols, curated app and game links, Agent Market CTAs, and activity history.
+- CoinGecko and DefiLlama server-side caches, curated fallback data for Earn and Explore, and a persistent-host Telegram price-alert worker with daily firing deduplication.
+- Telegram `/prices` and `/alerts` commands; the session cookie uses `SameSite=None; Secure` for secure deployments and `SameSite=Lax` locally. Browser API calls include credentials.
 
 ## Current scope limits
 
 - 1Click quotes are pricing/deposit instructions. The integration currently requests dry quotes and does not submit deposits.
 - The app does not claim that a cached quote is live or eligible for execution.
-- The portfolio endpoint deliberately refuses until a per-user NEAR Intents access token flow is configured; a shared partner JWT is not treated as user authorization.
-- Telegram notifications are limited to bot commands and entry points. Fill alerts, balance-change alerts, and price-target monitoring require an enabled execution and user-scoped balance service.
+- The portfolio currently reads the connected account's unlocked native NEAR balance through public NEAR RPC. NEAR Intents token balances need a user-scoped authorization flow; a shared partner JWT is not treated as user authorization.
+- Price-target Telegram alerts require a Telegram bot and a persistent host with `AGENT_WORKER_ENABLED=true`; Vercel functions do not run durable workers. Fill alerts and balance-change alerts require a user-scoped balance and execution service.
+- Portfolio balances are not inferred from the shared partner JWT. Intents balance access requires a user-scoped authorization flow.
 - The account policy is signed off-chain and checked by this API; it is not enforced by the Intents Verifier contract.
 - Named-account creation is handled by the selected wallet onboarding experience and is not provisioned by Pocket Near.
 - This application needs a security review, load testing, operational monitoring, and protocol-scoped authorization before it can be considered production-ready for autonomous asset movement.

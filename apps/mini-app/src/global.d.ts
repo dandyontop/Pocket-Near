@@ -1,1 +1,1 @@
-interface Window { Telegram?: { WebApp?: { initData:string; ready:()=>void; expand:()=>void; colorScheme?:string } } }
+interface Window { Telegram?: { WebApp?: { initData:string; ready:()=>void; expand:()=>void; openLink?:(url:string)=>void; colorScheme?:string } } }

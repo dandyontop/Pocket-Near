@@ -21,6 +21,10 @@ const schema = z.object({
   TEE_SIGNER_URL: z.preprocess(v=>v===""?undefined:v,z.string().url().optional()),
   TEE_SIGNER_API_KEY: z.string().default(""),
   DEV_ENCLAVE_PRIVATE_KEY: z.string().default(""),
+  COINGECKO_API_KEY: z.string().default(""),
+  PRICE_ASSET_IDS: z.string().default("bitcoin,ethereum,solana,near,usd-coin,tether,chainlink,avalanche-2,wrapped-bitcoin"),
+  PRICES_CACHE_TTL_SECONDS: z.coerce.number().int().min(30).max(60).default(45),
+  EARN_CACHE_TTL_SECONDS: z.coerce.number().int().min(300).max(900).default(600),
 }).refine(v=>Boolean(v.DATABASE_URL||v.POSTGRES_URL),{path:["DATABASE_URL"],message:"Set DATABASE_URL or the Supabase integration's POSTGRES_URL."});
 const parsed = schema.parse(process.env);
 export const env = {...parsed,DATABASE_URL:parsed.POSTGRES_URL||parsed.DATABASE_URL};

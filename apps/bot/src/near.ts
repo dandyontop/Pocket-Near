@@ -19,3 +19,9 @@ export async function verifyPolicySignature(envelope: SignedPolicyEnvelope): Pro
     provider: nearProvider,
   });
 }
+
+export async function readNativeNearBalance(accountId:string):Promise<{amount:string;locked:string;available:string;blockHeight:number}>{
+  const account=await nearProvider.viewAccount({accountId});
+  const available=account.amount-account.locked;
+  return {amount:account.amount.toString(),locked:account.locked.toString(),available:(available>0n?available:0n).toString(),blockHeight:account.block_height};
+}

@@ -48,6 +48,29 @@ export function migrate(): Promise<void> {
       event_type TEXT NOT NULL CHECK (event_type IN ('blocked','preview','submitted','success','failed')),
       details JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS price_watchlist (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      symbol TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(user_id,symbol)
+    );
+    CREATE TABLE IF NOT EXISTS price_alerts (
+      id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      symbol TEXT NOT NULL, op TEXT NOT NULL CHECK(op IN ('gte','lte')),
+      threshold_usd NUMERIC NOT NULL CHECK(threshold_usd > 0), active BOOLEAN NOT NULL DEFAULT true,
+      last_fired_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS price_alerts_active_idx ON price_alerts(active,symbol);
+    CREATE TABLE IF NOT EXISTS price_alert_firings (
+      alert_id BIGINT NOT NULL REFERENCES price_alerts(id) ON DELETE CASCADE,
+      bucket TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(alert_id,bucket)
+    );
+    CREATE TABLE IF NOT EXISTS discover_events (
+      id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      item_type TEXT NOT NULL CHECK(item_type IN ('app','game','earn')),
+      item_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('open')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_enabled BOOLEAN NOT NULL DEFAULT false;
@@ -56,6 +79,10 @@ export function migrate(): Promise<void> {
     ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE live_quotes ENABLE ROW LEVEL SECURITY;
     ALTER TABLE execution_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE price_watchlist ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE price_alert_firings ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE discover_events ENABLE ROW LEVEL SECURITY;
   `);
       await client.query("COMMIT");
     }catch(error){

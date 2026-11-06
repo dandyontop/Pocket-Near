@@ -41,6 +41,38 @@ export interface QuoteView {
 export interface PolicyUsage { dayAmount: string; weekAmount: string; dayKey: string; weekKey: string }
 export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };
 
+export const priceRowSchema = z.object({ id:z.string(), symbol:z.string(), name:z.string(), priceUsd:z.number().nonnegative(), change24hPct:z.number().nullable(), marketCap:z.number().nonnegative().nullable(), source:z.string(), updatedAt:z.string().datetime() });
+export type PriceRow = z.infer<typeof priceRowSchema>;
+export const priceAlertSchema = z.object({ id:z.number().int().positive().optional(), symbol:z.string().min(1).max(24), op:z.enum(["gte","lte"]), thresholdUsd:z.number().positive(), active:z.boolean().default(true) });
+export type PriceAlert = z.infer<typeof priceAlertSchema>;
+export const earnProtocolSchema = z.object({ id:z.string(), name:z.string(), category:z.string(), tvl:z.number().nonnegative(), change1d:z.number().nullable(), change7d:z.number().nullable(), url:z.string().url(), logo:z.string().url().optional() });
+export type EarnProtocol = z.infer<typeof earnProtocolSchema>;
+export const exploreAppSchema = z.object({ id:z.string(), name:z.string(), slug:z.string(), category:z.enum(["DeFi","AI","Social","Tools","Bridges","Wallets","Other"]), blurb:z.string(), url:z.string().url(), tvl:z.number().nonnegative().optional(), featured:z.boolean().default(false) });
+export type ExploreApp = z.infer<typeof exploreAppSchema>;
+export const exploreGameSchema = z.object({ id:z.string(), name:z.string(), blurb:z.string(), url:z.string().url(), tags:z.array(z.string()) });
+export type ExploreGame = z.infer<typeof exploreGameSchema>;
+export const agentStatusSchema = z.object({ agentEnabled:z.boolean(), autoEnabled:z.boolean(), frozen:z.boolean(), policy:policySchema.nullable(), lastEvents:z.array(z.object({event_type:z.string(),details:z.record(z.unknown()),created_at:z.string()})) });
+export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
+export const curatedExploreApps: ExploreApp[] = [
+  {id:"ref-finance",name:"Rhea Finance",slug:"rhea-finance",category:"DeFi",blurb:"NEAR decentralized exchange and liquidity markets.",url:"https://rhea.finance",featured:true},
+  {id:"burrow",name:"Burrow",slug:"burrow",category:"DeFi",blurb:"Lending and borrowing markets on NEAR.",url:"https://app.burrow.finance",featured:true},
+  {id:"near-intents",name:"NEAR Intents",slug:"near-intents",category:"Bridges",blurb:"Move assets across chains through solver-based intents.",url:"https://near-intents.org",featured:true},
+  {id:"market-near",name:"NEAR AI Agent Market",slug:"agent-market",category:"AI",blurb:"Discover, hire, or list agents in the NEAR ecosystem.",url:"https://market.near.ai",featured:true},
+  {id:"near-wallet",name:"MyNearWallet",slug:"mynearwallet",category:"Wallets",blurb:"A browser wallet for the NEAR ecosystem.",url:"https://mynearwallet.com",featured:false},
+  {id:"near-docs",name:"NEAR Documentation",slug:"near-docs",category:"Tools",blurb:"Developer guides and ecosystem documentation.",url:"https://docs.near.org",featured:false},
+  {id:"meteor-wallet",name:"Meteor Wallet",slug:"meteor-wallet",category:"Wallets",blurb:"A self-custody wallet for NEAR apps.",url:"https://meteorwallet.app",featured:false},
+  {id:"learn-near",name:"Learn NEAR",slug:"learn-near",category:"Social",blurb:"Community learning resources for the NEAR ecosystem.",url:"https://learnnear.club",featured:false},
+];
+export const curatedExploreGames: ExploreGame[] = [
+  {id:"near-games",name:"NEAR Games",blurb:"Explore community games and game projects in the NEAR ecosystem.",url:"https://near.org/ecosystem?category=Gaming",tags:["Community","Games"]},
+  {id:"playember",name:"Play Ember",blurb:"Discover blockchain games and gaming communities.",url:"https://playember.com",tags:["Games","Community"]},
+];
+export const curatedEarnFallback: EarnProtocol[] = [
+  {id:"rhea-finance",name:"Rhea Finance",category:"Dexes",tvl:0,change1d:null,change7d:null,url:"https://rhea.finance"},
+  {id:"burrow",name:"Burrow",category:"Lending",tvl:0,change1d:null,change7d:null,url:"https://app.burrow.finance"},
+];
+
 const asBigInt = (value: string): bigint => {
   if (!/^\d+$/.test(value)) throw new Error("Amount must be an unsigned integer in base units.");
   return BigInt(value);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import express, { type NextFunction, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
@@ -10,12 +10,13 @@ import { canonicalPolicy, checkPolicy, policySchema, quoteInputSchema, type Quot
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
-import { verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
+import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
 import { fetchLiveQuote } from "./quotes.js";
 import { teeSigner } from "./tee/signer.js";
+import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
-const app = express();
+const app: Express = express();
 if(process.env.VERCEL)app.set("trust proxy",1);
 const origins = new Set([
   ...env.ALLOWED_ORIGINS.split(",").map(v => v.trim()).filter(Boolean),
@@ -40,7 +41,7 @@ app.use((_req,_res,next)=>{void migrate().then(()=>next(),next);});
 function fail(res: Response, status: number, message: string): void { res.status(status).json({ error: message }); }
 function asyncRoute(fn: (req: Request,res: Response,next: NextFunction) => Promise<unknown>) { return (req: Request,res: Response,next: NextFunction) => { void fn(req,res,next).catch(next); }; }
 const cookieName = "pocket_near_session";
-function cookie(res: Response, token: string) { res.cookie(cookieName,token,{ httpOnly:true, secure:env.COOKIE_SECURE, sameSite:"strict", path:"/api", maxAge:12*60*60*1000 }); }
+function cookie(res: Response, token: string) { res.cookie(cookieName,token,{ httpOnly:true, secure:env.COOKIE_SECURE, sameSite:env.COOKIE_SECURE?"none":"lax", path:"/api", maxAge:12*60*60*1000 }); }
 
 const requireSession = asyncRoute(async (req,res,next) => {
   try {
@@ -53,6 +54,48 @@ const requireSession = asyncRoute(async (req,res,next) => {
     next();
   } catch { fail(res,401,"Session expired. Reopen the Mini App from Telegram."); }
 });
+
+app.get("/api/prices",requireSession,asyncRoute(async(_req,res)=>{
+  const data=await getPrices();res.setHeader("Cache-Control","private, max-age=30");res.json(data);
+}));
+app.get("/api/prices/watchlist",requireSession,asyncRoute(async(req,res)=>{
+  const {rows}=await pool.query<{symbol:string}>("SELECT symbol FROM price_watchlist WHERE user_id=$1 ORDER BY created_at",[req.userId]);res.json({symbols:rows.map(r=>r.symbol)});
+}));
+app.put("/api/prices/watchlist",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({symbols:z.array(z.string().min(1).max(24)).max(50)}).parse(req.body);
+  const symbols=[...new Set(body.symbols.map(s=>s.toUpperCase()))];
+  const client=await pool.connect();
+  try{await client.query("BEGIN");await client.query("DELETE FROM price_watchlist WHERE user_id=$1",[req.userId]);for(const symbol of symbols)await client.query("INSERT INTO price_watchlist(user_id,symbol) VALUES($1,$2) ON CONFLICT DO NOTHING",[req.userId,symbol]);await client.query("COMMIT");}catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+  res.json({symbols});
+}));
+app.get("/api/prices/alerts",requireSession,asyncRoute(async(req,res)=>{
+  const {rows}=await pool.query("SELECT id,symbol,op,threshold_usd::float8 AS \"thresholdUsd\",active,created_at AS \"createdAt\" FROM price_alerts WHERE user_id=$1 ORDER BY created_at DESC",[req.userId]);res.json({alerts:rows});
+}));
+app.post("/api/prices/alerts",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({symbol:z.string().min(1).max(24),op:z.enum(["gte","lte"]),thresholdUsd:z.number().positive().finite()}).parse(req.body);
+  const symbol=body.symbol.toUpperCase();const market=await getPrices();if(!market.rows.some(p=>p.symbol===symbol))return fail(res,400,"Choose a symbol from the current price list.");
+  const {rows}=await pool.query("INSERT INTO price_alerts(user_id,symbol,op,threshold_usd) VALUES($1,$2,$3,$4) RETURNING id,symbol,op,threshold_usd::float8 AS \"thresholdUsd\",active,created_at AS \"createdAt\"",[req.userId,symbol,body.op,body.thresholdUsd]);res.status(201).json({alert:rows[0]});
+}));
+app.patch("/api/prices/alerts/:id",requireSession,asyncRoute(async(req,res)=>{
+  const id=z.coerce.number().int().positive().parse(req.params.id);const {active}=z.object({active:z.boolean()}).parse(req.body);
+  const {rows}=await pool.query("UPDATE price_alerts SET active=$1,last_fired_at=CASE WHEN $1 THEN last_fired_at ELSE NULL END WHERE id=$2 AND user_id=$3 RETURNING id,symbol,op,threshold_usd::float8 AS \"thresholdUsd\",active,created_at AS \"createdAt\"",[active,id,req.userId]);if(!rows.length)return fail(res,404,"Price alert was not found.");res.json({alert:rows[0]});
+}));
+app.delete("/api/prices/alerts/:id",requireSession,asyncRoute(async(req,res)=>{
+  const id=z.coerce.number().int().positive().parse(req.params.id);const result=await pool.query("DELETE FROM price_alerts WHERE id=$1 AND user_id=$2",[id,req.userId]);if(!result.rowCount)return fail(res,404,"Price alert was not found.");res.status(204).end();
+}));
+app.get("/api/earn",requireSession,asyncRoute(async(req,res)=>{
+  const data=await getEarn();const category=typeof req.query.category==="string"?req.query.category:undefined;const minTvl=Number(req.query.minTvl??0);const sort=req.query.sort==="change1d"?"change1d":req.query.sort==="change7d"?"change7d":"tvl";
+  const protocols=data.protocols.filter(p=>(!category||p.category.toLowerCase()===category.toLowerCase())&&p.tvl>=Math.max(0,minTvl)).sort((a,b)=>sort==="tvl"?b.tvl-a.tvl:(b[sort]??-Infinity)-(a[sort]??-Infinity));res.json({...data,protocols});
+}));
+app.get("/api/explore/apps",requireSession,asyncRoute(async(req,res)=>{
+  const category=typeof req.query.category==="string"?req.query.category:undefined;const search=typeof req.query.search==="string"?req.query.search.toLowerCase().slice(0,80):"";const sort=req.query.sort==="name"?"name":req.query.sort==="featured"?"featured":"tvl";
+  const {protocols}=await getEarn();const mapped=getCuratedApps().map(app=>{const protocol=protocols.find(p=>p.name.toLowerCase()===app.name.toLowerCase()||p.id===app.slug);return {...app,...(protocol?{tvl:protocol.tvl}:{})};});
+  const apps=mapped.filter(a=>(!category||a.category===category)&&(!search||`${a.name} ${a.blurb} ${a.category}`.toLowerCase().includes(search))).sort((a,b)=>sort==="name"?a.name.localeCompare(b.name):sort==="featured"?Number(b.featured)-Number(a.featured)||((b.tvl??0)-(a.tvl??0)):((b.tvl??0)-(a.tvl??0))||Number(b.featured)-Number(a.featured));res.json({apps,source:"curated+DefiLlama"});
+}));
+app.get("/api/explore/games",requireSession,(_req,res)=>res.json({games:getCuratedGames(),source:"curated"}));
+app.post("/api/discover/events",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({itemType:z.enum(["app","game","earn"]),itemId:z.string().min(1).max(120)}).parse(req.body);await pool.query("INSERT INTO discover_events(user_id,item_type,item_id,action) VALUES($1,$2,$3,'open')",[req.userId,body.itemType,body.itemId]);res.status(201).json({recorded:true});
+}));
 
 async function requirePassword(req: Request, supplied?: string): Promise<boolean> {
   const row = await pool.query<{password_salt:string|null,password_hash:string|null}>("SELECT password_salt,password_hash FROM users WHERE id=$1",[req.userId]);
@@ -78,7 +121,7 @@ app.post("/api/auth/dev",loginRate,asyncRoute(async(_req,res)=>{
   cookie(res,await makeSession(telegramId));
   res.json({authenticated:true,developmentOnly:true});
 }));
-app.post("/api/auth/logout",(_req,res) => { res.clearCookie(cookieName,{ path:"/api", sameSite:"strict", secure:env.COOKIE_SECURE }); res.status(204).end(); });
+app.post("/api/auth/logout",(_req,res) => { res.clearCookie(cookieName,{ path:"/api", sameSite:env.COOKIE_SECURE?"none":"lax", secure:env.COOKIE_SECURE }); res.status(204).end(); });
 app.get("/api/auth/me",requireSession,asyncRoute(async (req,res) => {
   const { rows } = await pool.query("SELECT account_id,(password_hash IS NOT NULL) AS password_set,agent_enabled,auto_enabled FROM users WHERE id=$1",[req.userId]);
   res.json({ accountId:rows[0]?.account_id ?? null,passwordSet:rows[0]?.password_set ?? false,agentEnabled:rows[0]?.agent_enabled??false,autoEnabled:rows[0]?.auto_enabled??false });
@@ -196,7 +239,8 @@ app.post("/api/agent/evaluate",requireSession,asyncRoute(async (req,res) => {
 app.get("/api/portfolio",requireSession,asyncRoute(async (req,res) => {
   const account = await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);
   if (!account.rows[0]?.account_id) return fail(res,409,"Connect and authenticate a NEAR wallet to view your portfolio.");
-  return fail(res,501,"Portfolio balance access requires a user-scoped NEAR Intents access token; this deployment has not been authorized to read the account.");
+  try{const balance=await readNativeNearBalance(account.rows[0].account_id);res.json({accountId:account.rows[0].account_id,balances:[{assetId:"near:native",symbol:"NEAR",amount:balance.available,decimals:24,locked:balance.locked,source:"NEAR RPC",blockHeight:balance.blockHeight}],failures:[]});}
+  catch{res.json({accountId:account.rows[0].account_id,balances:[],failures:["NEAR account balance could not be loaded from the RPC."]});}
 }));
 
 app.post("/api/agent/execute",requireSession,asyncRoute(async (req,res) => {

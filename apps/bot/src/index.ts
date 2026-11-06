@@ -5,18 +5,23 @@ import { env } from "./env.js";
 import { startAgentWorker } from "./agentWorker.js";
 import { policySchema, checkPolicy, type QuoteView } from "@pocket-near/shared";
 import { teeSigner } from "./tee/signer.js";
+import { startPriceAlertWorker } from "./priceAlertWorker.js";
+import { getPrices } from "./dataFeeds.js";
 
 async function start(): Promise<void> {
 await migrate();
 const server=app.listen(env.PORT,()=>console.info(`Pocket Near API listening on ${env.PORT}`));
 let bot:Telegraf|undefined;
 let stopWorker:(()=>void)|undefined;
+let stopPriceAlerts:(()=>void)|undefined;
 if(env.TELEGRAM_BOT_TOKEN){
   bot=new Telegraf(env.TELEGRAM_BOT_TOKEN);
   bot.start(async ctx=>{
     await ctx.reply("Welcome to Pocket Near. Connect your wallet, set a signed policy, and review live NEAR Intents quotes from your Mini App.",Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]]));
   });
   bot.command("help",ctx=>ctx.reply("Pocket Near checks live quotes against your wallet-signed policy. Your wallet remains in control of every on-chain action."));
+  bot.command("prices",async ctx=>{try{const {rows}=await getPrices();return ctx.reply(rows.slice(0,8).map(p=>`${p.symbol}: $${new Intl.NumberFormat("en-US",{maximumSignificantDigits:6}).format(p.priceUsd)} (${p.change24hPct===null?"n/a":`${p.change24hPct>=0?"+":""}${p.change24hPct.toFixed(2)}%`})`).join("\n")||"No price rows are available.",Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]]));}catch{return ctx.reply("Price data is temporarily unavailable. Open Pocket Near to retry.");}});
+  bot.command("alerts",async ctx=>{const {rows}=await pool.query<{symbol:string;op:string;threshold_usd:string;active:boolean}>("SELECT symbol,op,threshold_usd::text,active FROM price_alerts a JOIN users u ON u.id=a.user_id WHERE u.telegram_id=$1 ORDER BY a.created_at DESC LIMIT 20",[ctx.from.id]);return ctx.reply(rows.length?rows.map(a=>`${a.active?"●":"○"} ${a.symbol} ${a.op==="gte"?"≥":"≤"} $${a.threshold_usd}`).join("\n"):"You have no price alerts. Create one in Pocket Near.",Markup.inlineKeyboard([[Markup.button.webApp("Open alerts",env.PUBLIC_APP_URL)]]));});
   bot.command("agent",async ctx=>{
     const action=ctx.message.text.split(/\s+/)[1]?.toLowerCase();if(action!=="on"&&action!=="off")return ctx.reply("Use /agent on or /agent off.");
     if(action==="on"){
@@ -53,7 +58,7 @@ if(env.TELEGRAM_BOT_TOKEN){
   });
   bot.action(/^reject:(.+)$/,async ctx=>{await ctx.answerCbQuery("Quote rejected.");await ctx.editMessageText("Quote rejected. No funds moved.");});
   bot.catch(error=>console.error("Telegram bot update failed",error));
-  if(env.AGENT_WORKER_ENABLED)stopWorker=startAgentWorker(async(telegramId,text,quoteId)=>{await bot!.telegram.sendMessage(telegramId,text,{reply_markup:{inline_keyboard:[[{text:"Approve",callback_data:`approve:${quoteId}`},{text:"Reject",callback_data:`reject:${quoteId}`}]]}});},env.AGENT_WORKER_INTERVAL_MS);
+  if(env.AGENT_WORKER_ENABLED){stopWorker=startAgentWorker(async(telegramId,text,quoteId)=>{await bot!.telegram.sendMessage(telegramId,text,{reply_markup:{inline_keyboard:[[{text:"Approve",callback_data:`approve:${quoteId}`},{text:"Reject",callback_data:`reject:${quoteId}`}]]}});},env.AGENT_WORKER_INTERVAL_MS);stopPriceAlerts=startPriceAlertWorker(async(telegramId,text)=>{await bot!.telegram.sendMessage(telegramId,text);},env.AGENT_WORKER_INTERVAL_MS);}
   const menuButton={type:"web_app" as const,text:"Open Pocket Near",web_app:{url:env.PUBLIC_APP_URL}};
   await bot.telegram.setChatMenuButton({menuButton});
   if(env.TELEGRAM_WEBHOOK_URL){
@@ -71,6 +76,7 @@ if(env.TELEGRAM_BOT_TOKEN){
 
 const shutdown=async()=>{
   stopWorker?.();
+  stopPriceAlerts?.();
   if(bot){bot.stop("SIGTERM");}
   server.close();
   await pool.end();

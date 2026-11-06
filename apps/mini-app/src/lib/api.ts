@@ -1,4 +1,4 @@
-import type { AgentPolicy, Asset, QuoteInput, QuoteView } from "@pocket-near/shared";
+import type { AgentPolicy, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 async function request<T>(path:string,init:RequestInit={}):Promise<T>{
@@ -23,5 +23,17 @@ export const api={
   evaluate:(quoteId:string,recordPreview=false)=>request<{decision:{allowed:boolean;reason?:string};executionMode:string;message:string}>("/api/agent/evaluate",{method:"POST",body:JSON.stringify({quoteId,recordPreview})}),
   execute:(quoteId:string,password:string)=>request<{error:string;requiresWalletSignature?:boolean}>("/api/agent/execute",{method:"POST",body:JSON.stringify({quoteId,password})}),
   events:()=>request<{events:Array<{event_type:string;details:Record<string,unknown>;created_at:string}>}>("/api/events"),
+  portfolio:()=>request<{accountId:string;balances:Array<{assetId:string;symbol:string;amount:string;decimals:number;locked:string;source:string;blockHeight:number}>;failures:string[]}>("/api/portfolio"),
+  prices:()=>request<{rows:PriceRow[];source:string;updatedAt:string}>("/api/prices"),
+  watchlist:()=>request<{symbols:string[]}>("/api/prices/watchlist"),
+  saveWatchlist:(symbols:string[])=>request<{symbols:string[]}>("/api/prices/watchlist",{method:"PUT",body:JSON.stringify({symbols})}),
+  alerts:()=>request<{alerts:Array<{id:number;symbol:string;op:"gte"|"lte";thresholdUsd:number;active:boolean;createdAt:string}>}>("/api/prices/alerts"),
+  createAlert:(data:{symbol:string;op:"gte"|"lte";thresholdUsd:number})=>request<{alert:{id:number;symbol:string;op:"gte"|"lte";thresholdUsd:number;active:boolean;createdAt:string}}>("/api/prices/alerts",{method:"POST",body:JSON.stringify(data)}),
+  deleteAlert:(id:number)=>request<void>(`/api/prices/alerts/${id}`,{method:"DELETE"}),
+  setAlertActive:(id:number,active:boolean)=>request<{alert:{id:number;symbol:string;op:"gte"|"lte";thresholdUsd:number;active:boolean;createdAt:string}}>(`/api/prices/alerts/${id}`,{method:"PATCH",body:JSON.stringify({active})}),
+  earn:()=>request<{protocols:EarnProtocol[];source:string;updatedAt:string}>("/api/earn"),
+  apps:()=>request<{apps:ExploreApp[];source:string}>("/api/explore/apps"),
+  games:()=>request<{games:ExploreGame[];source:string}>("/api/explore/games"),
+  discover:(itemType:"app"|"game"|"earn",itemId:string)=>request<{recorded:boolean}>("/api/discover/events",{method:"POST",body:JSON.stringify({itemType,itemId})}),
   logout:()=>request<void>("/api/auth/logout",{method:"POST"}),
 };
