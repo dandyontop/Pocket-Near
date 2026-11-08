@@ -98,6 +98,43 @@ app.post("/api/discover/events",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({itemType:z.enum(["app","game","earn"]),itemId:z.string().min(1).max(120)}).parse(req.body);await pool.query("INSERT INTO discover_events(user_id,item_type,item_id,action) VALUES($1,$2,$3,'open')",[req.userId,body.itemType,body.itemId]);res.status(201).json({recorded:true});
 }));
 
+const knownMemeCoinGeckoIds=new Set(["based-brett","dogecoin","official-trump","pepe","shiba-inu"]);
+async function getMemeAssets(){
+  const response=await fetch(`${env.ONE_CLICK_BASE_URL}/v0/tokens`,{signal:AbortSignal.timeout(10_000)});
+  if(!response.ok)throw Object.assign(new Error("Supported asset directory is temporarily unavailable."),{status:502});
+  const data:unknown=await response.json();
+  if(!Array.isArray(data))throw Object.assign(new Error("Supported asset directory returned an invalid response."),{status:502});
+  return data.map(item=>{
+    const value=item as Record<string,unknown>;
+    return {assetId:String(value.assetId??""),symbol:String(value.symbol??""),name:String(value.name??""),decimals:Number(value.decimals),blockchain:String(value.blockchain??""),coingeckoId:String(value.coingeckoId??"")};
+  }).filter(asset=>asset.assetId&&asset.symbol&&Number.isInteger(asset.decimals)&&asset.decimals>=0&&asset.decimals<=30&&knownMemeCoinGeckoIds.has(asset.coingeckoId)).slice(0,100);
+}
+app.get("/api/meme/board",requireSession,asyncRoute(async(req,res)=>{
+  const assets=await getMemeAssets();
+  if(!assets.length)return res.json({status:"coming_soon",assets:[]});
+  const {rows}=await pool.query<{asset_id:string;bull_votes:string;bear_votes:string;user_vote:"bull"|"bear"|null}>(
+    `SELECT asset_id,
+      count(*) FILTER(WHERE vote='bull')::text AS bull_votes,
+      count(*) FILTER(WHERE vote='bear')::text AS bear_votes,
+      max(vote) FILTER(WHERE user_id=$2) AS user_vote
+     FROM meme_votes WHERE asset_id=ANY($1::text[]) GROUP BY asset_id`,
+    [assets.map(asset=>asset.assetId),req.userId],
+  );
+  const byAsset=new Map(rows.map(row=>[row.asset_id,row]));
+  res.setHeader("Cache-Control","private, no-store");
+  res.json({status:"live",assets:assets.map(asset=>{
+    const votes=byAsset.get(asset.assetId);
+    return {...asset,bullVotes:Number(votes?.bull_votes??0),bearVotes:Number(votes?.bear_votes??0),userVote:votes?.user_vote??null};
+  })});
+}));
+app.put("/api/meme/vote",requireSession,asyncRoute(async(req,res)=>{
+  const {assetId,vote}=z.object({assetId:z.string().min(1).max(160),vote:z.enum(["bull","bear"])}).parse(req.body);
+  const asset=(await getMemeAssets()).find(candidate=>candidate.assetId===assetId);
+  if(!asset)return fail(res,404,"This asset is not in the current Intents meme list.");
+  await pool.query("INSERT INTO meme_votes(user_id,asset_id,vote) VALUES($1,$2,$3) ON CONFLICT(user_id,asset_id) DO UPDATE SET vote=EXCLUDED.vote,updated_at=now()",[req.userId,assetId,vote]);
+  res.json({saved:true});
+}));
+
 app.get("/api/market/agents",requireSession,asyncRoute(async(req,res)=>{
   const query=typeof req.query.query==="string"?req.query.query.slice(0,100):"";const category=typeof req.query.category==="string"?req.query.category.slice(0,80):"";
   let offset=0;if(typeof req.query.cursor==="string"){try{offset=Number(Buffer.from(req.query.cursor,"base64url").toString("utf8"));}catch{return fail(res,400,"Invalid marketplace cursor.");}}

@@ -1,6 +1,6 @@
 # Pocket Near
 
-Pocket Near is a Telegram-native NEAR super-pocket. Its Mini App has Move, Prices, Earn, Explore, and Agents tabs. It connects to a user's own NEAR wallet, verifies wallet ownership with NEP-413 signatures, stores signed policies in PostgreSQL, and displays quotes from 1Click and the Solver Relay.
+Pocket Near is a Telegram-native NEAR super-pocket. Its Mini App has Home, Watch, Swap, Discover, and You tabs. It connects to a user's own NEAR wallet, verifies wallet ownership with NEP-413 signatures, stores signed policies in PostgreSQL, and displays quotes from 1Click and the Solver Relay.
 
 ## Security boundary
 
@@ -26,7 +26,7 @@ packages/
 
 PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelopes, short-lived quote cache entries, audit events, price watchlists and alerts, alert deduplication records, and optional discover-open events. Secrets are loaded only from environment variables.
 
-The five tabs share one authenticated Mini App session. Prices use CoinGecko's public markets endpoint (optional demo key) with a 45-second default cache. Earn data uses DefiLlama and falls back to curated NEAR protocols when unavailable. Explore combines a curated catalog with available DefiLlama TVL and outbound-only game links. The Agents tab separates My Agent from a server-proxied catalog using NEAR Agent Market's public list, detail, and pricing-plan API; Hire leaves the Mini App for Market's own buyer flow. Catalog results are cached for 60–120 seconds, default 90. Pocket Near does not reproduce Agent Market escrow, disputes, or payouts. Telegram workers only run in a persistent bot process; Vercel serverless functions do not keep intervals alive.
+The five tabs share one authenticated Mini App session. Watch displays only the pairs in the active signed policy and refreshes price context while visible; it never requests trade quotes. Swap is the only screen that requests 1Click quotes. Discover includes CoinGecko prices, DefiLlama earn data (with curated NEAR protocol fallback), curated apps and outbound game links, and a meme board only when one of the explicitly recognized CoinGecko asset IDs is present in the Intents token catalog. Meme votes are social-only and do not affect policy or execution. You shows the full NEAR `accountId` as the Pocket identity and separates My Agent controls from a server-proxied catalog using NEAR Agent Market's public list, detail, and pricing-plan API; Hire leaves the Mini App for Market's own buyer flow. Quests are marked coming soon and have no rewards or completion logic. Catalog results are cached for 60–120 seconds, default 90. Pocket Near does not reproduce Agent Market escrow, disputes, or payouts. Telegram workers only run in a persistent bot process; Vercel serverless functions do not keep intervals alive.
 
 ## Requirements
 
@@ -69,16 +69,16 @@ The five tabs share one authenticated Mini App session. Prices use CoinGecko's p
    - For local bot testing, leave `TELEGRAM_WEBHOOK_URL` unset; the bot uses long polling when `NODE_ENV=development`.
    - Open the bot and press **Open Pocket Near**. The backend validates Telegram's `initData`; browser preview uses the development-only session route.
 
-5. Connect a wallet, create the one-time unlock password in **Agents → My Agent**, choose assets and limits, then unlock and sign the policy with your wallet. Try notify-only, master lock, and auto mode; enabling auto and clearing locks require the password dialog. No password input remains on the main screens. In **Move**, request a live quote and review the policy decision. Any on-chain transaction must still be approved in the wallet.
+5. Connect a wallet, create the one-time unlock password in **You → My Agent**, choose assets and limits, then unlock and sign the policy with your wallet. Try notify-only, master lock, and auto mode; enabling auto and clearing locks require the password dialog. No password input remains on the main screens. In **Watch**, inspect only the signed policy pairs; choose **Swap this pair** to prefill the user-driven Swap form, request a live quote, and review the policy decision. Any on-chain transaction must still be approved in the wallet.
 
-## Five-minute demo
+## Telegram mobile demo
 
 1. Start PostgreSQL and run `npm run db:migrate`, then start the API and Mini App with `npm run dev`.
 2. Open the Mini App from Telegram (or the development browser session), then connect a NEAR wallet and verify the wallet challenge.
-3. In **Agents**, create an unlock password, choose a pair and limits, and sign the policy in the wallet. Turn on monitoring to enable quote previews; auto mode remains password-gated and does not submit swaps.
-4. In **Move**, enter an amount and destination/refund addresses for non-NEAR chains, request a quote, and inspect output, route, fees, expiry and policy decision. A blocked pair or limit should show a clear reason.
-5. In **Prices**, search assets, add a watchlist favorite, and create an alert. In a persistent bot deployment with `AGENT_WORKER_ENABLED=true`, `/prices` and `/alerts` work in Telegram and alert matches are sent at most once per alert per day.
-6. In **Earn** and **Explore**, inspect ranked protocols, curated apps and outbound game links. In **Agents → Marketplace**, search real listings, open a detail sheet, and follow Hire to Market. In **My Agent**, export a policy template and inspect recent events. `/status`, `/lock`, and `/unlock` provide the Telegram control plane; chat never collects passwords.
+3. In **You → My Agent**, create an unlock password once, choose a pair and limits, and sign the policy in the wallet. Turn on monitoring to scan only those signed pairs; auto mode remains password-gated and never reports an unsigned fill.
+4. Open **Watch** to see policy chips and available live price context. Tap a pair's **Swap this pair** action; in **Swap**, set amount and any required destination/refund address, request a quote, and inspect output, route, fees, expiry, and allow/block decision.
+5. Use the ephemeral unlock prompt to prepare a policy-approved preview. The UI distinguishes TEE-off/error from a TEE-signed preview and states that no quote was submitted or settled. Share a quote preview through Telegram's in-app link handler; the tweet intent says it is not submitted and does not claim a fill.
+6. In **You**, verify the full wallet `accountId` identity and inspect profile, security, locks, policy, and agent events. **Discover** shows meme assets/votes only when backed by the current Intents token catalog; otherwise it says Coming soon. Quests also say Coming soon. Check curated apps, prices, Earn, games, and NEAR Agent Market there. `/status`, `/lock`, and `/unlock` remain the Telegram control plane; chat never collects passwords.
 
 ## Deploying to Vercel
 

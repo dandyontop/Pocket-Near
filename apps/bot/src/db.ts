@@ -71,6 +71,13 @@ export function migrate(): Promise<void> {
       item_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('open')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS meme_votes (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      asset_id TEXT NOT NULL,
+      vote TEXT NOT NULL CHECK(vote IN ('bull','bear')),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(user_id,asset_id)
+    );
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_enabled BOOLEAN NOT NULL DEFAULT false;
@@ -89,6 +96,7 @@ export function migrate(): Promise<void> {
     ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_alert_firings ENABLE ROW LEVEL SECURITY;
     ALTER TABLE discover_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE meme_votes ENABLE ROW LEVEL SECURITY;
   `);
       await client.query("COMMIT");
     }catch(error){

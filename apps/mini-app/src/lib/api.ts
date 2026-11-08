@@ -1,4 +1,4 @@
-import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame } from "@pocket-near/shared";
+import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 async function request<T>(path:string,init:RequestInit={}):Promise<T>{
@@ -16,6 +16,8 @@ export const api={
   walletChallenge:(accountId:string)=>request<{message:string;recipient:string;nonce:string}>("/api/wallet/challenge",{method:"POST",body:JSON.stringify({accountId})}),
   walletVerify:(envelope:unknown)=>request<{accountId:string}>("/api/wallet/verify",{method:"POST",body:JSON.stringify(envelope)}),
   assets:()=>request<{assets:Asset[]}>("/api/assets"),
+  memeBoard:()=>request<MemeBoard>("/api/meme/board"),
+  voteMeme:(assetId:string,vote:MemeVote)=>request<{saved:boolean}>("/api/meme/vote",{method:"PUT",body:JSON.stringify({assetId,vote})}),
   policy:()=>request<{policy:{body:AgentPolicy;active:boolean}|null}>("/api/policy"),
   challenge:(accountId:string)=>request<{message:string;recipient:string;nonce:string}>("/api/policy/challenge",{method:"POST",body:JSON.stringify({accountId})}),
   savePolicy:(policy:AgentPolicy,envelope:unknown,password:string)=>request<{saved:boolean}>("/api/policy",{method:"PUT",headers:{"x-pocket-password":password},body:JSON.stringify({policy,envelope})}),

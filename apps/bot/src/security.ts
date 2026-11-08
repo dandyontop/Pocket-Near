@@ -7,7 +7,7 @@ const scrypt = promisify(scryptCallback);
 const sessionKey = new TextEncoder().encode(env.SESSION_SECRET);
 const toHex = (b: Buffer) => b.toString("hex");
 
-export function verifyTelegramInitData(initData: string): { userId: number; username?: string } {
+export function verifyTelegramInitData(initData: string): { userId: number } {
   if (!env.TELEGRAM_BOT_TOKEN) throw new Error("Telegram bot is not configured.");
   const params = new URLSearchParams(initData);
   const hash = params.get("hash");
@@ -22,9 +22,9 @@ export function verifyTelegramInitData(initData: string): { userId: number; user
   if (a.length !== b.length || !timingSafeEqual(a,b)) throw new Error("Telegram launch signature is invalid.");
   const rawUser = params.get("user");
   if (!rawUser) throw new Error("Telegram launch is missing its user identity.");
-  const user = JSON.parse(rawUser) as { id?: number; username?: string };
+  const user = JSON.parse(rawUser) as { id?: number };
   if (!Number.isSafeInteger(user.id) || !user.id) throw new Error("Telegram user identity is invalid.");
-  return { userId: user.id, ...(user.username ? { username: user.username } : {}) };
+  return { userId: user.id };
 }
 
 export async function makeSession(telegramId: number): Promise<string> {

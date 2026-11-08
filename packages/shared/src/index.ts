@@ -6,6 +6,17 @@ export const assetSchema = z.object({
   blockchain: z.string().max(40).default(""),
 });
 export type Asset = z.infer<typeof assetSchema>;
+export const memeVoteSchema = z.enum(["bull","bear"]);
+export type MemeVote = z.infer<typeof memeVoteSchema>;
+export interface MemeBoardAsset extends Asset {
+  bullVotes: number;
+  bearVotes: number;
+  userVote: MemeVote | null;
+}
+export interface MemeBoard {
+  status: "live" | "coming_soon";
+  assets: MemeBoardAsset[];
+}
 
 export const policySchema = z.object({
   version: z.literal(1),
