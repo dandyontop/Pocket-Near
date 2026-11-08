@@ -51,8 +51,14 @@ export const exploreAppSchema = z.object({ id:z.string(), name:z.string(), slug:
 export type ExploreApp = z.infer<typeof exploreAppSchema>;
 export const exploreGameSchema = z.object({ id:z.string(), name:z.string(), blurb:z.string(), url:z.string().url(), tags:z.array(z.string()) });
 export type ExploreGame = z.infer<typeof exploreGameSchema>;
-export const agentStatusSchema = z.object({ agentEnabled:z.boolean(), autoEnabled:z.boolean(), frozen:z.boolean(), policy:policySchema.nullable(), lastEvents:z.array(z.object({event_type:z.string(),details:z.record(z.unknown()),created_at:z.string()})) });
+export const agentModeSchema=z.enum(["off","notify_only","auto_inside_policy"]);
+export type AgentMode=z.infer<typeof agentModeSchema>;
+export const agentStatusSchema = z.object({ agentEnabled:z.boolean(), mode:agentModeSchema, masterLock:z.boolean(), autoExecLock:z.boolean(), freeze:z.boolean(), passwordSet:z.boolean(), policyActive:z.boolean(), lastRunAt:z.string().nullable(), lastError:z.string().nullable(), policy:policySchema.nullable(), lastEvents:z.array(z.object({event_type:z.string(),details:z.record(z.unknown()),created_at:z.string()})) });
 export type AgentStatus = z.infer<typeof agentStatusSchema>;
+export const marketAgentCardSchema=z.object({id:z.string(),name:z.string(),tagline:z.string(),description:z.string().optional(),priceLabel:z.string(),currency:z.string().optional(),category:z.string().optional(),tags:z.array(z.string()),builderName:z.string().optional(),hireUrl:z.string().url(),detailUrl:z.string().url(),rawUpdatedAt:z.string().optional()});
+export type MarketAgentCard=z.infer<typeof marketAgentCardSchema>;
+export const marketAgentDetailSchema=marketAgentCardSchema.extend({description:z.string(),bioMarkdown:z.string().optional(),deliveredJobs:z.number().nonnegative().optional(),successRate:z.number().min(0).max(1).optional(), responseTimeSeconds:z.number().nonnegative().optional()});
+export type MarketAgentDetail=z.infer<typeof marketAgentDetailSchema>;
 
 export const curatedExploreApps: ExploreApp[] = [
   {id:"ref-finance",name:"Rhea Finance",slug:"rhea-finance",category:"DeFi",blurb:"NEAR decentralized exchange and liquidity markets.",url:"https://rhea.finance",featured:true},

@@ -1,0 +1,13 @@
+import { useState } from "react";
+
+type CreateProps={onCreate:(password:string)=>Promise<void>};
+export function CreatePasswordCard({onCreate}:CreateProps){
+  const [value,setValue]=useState("");const [error,setError]=useState("");const [busy,setBusy]=useState(false);
+  return <section className="form-card"><div className="form-title"><div><strong>Create unlock password</strong><span>Used only when you authorize a sensitive action.</span></div></div><label className="field">New password<input type="password" autoComplete="new-password" minLength={10} value={value} onChange={e=>setValue(e.target.value)} placeholder="At least 10 characters"/></label>{error&&<p role="alert" className="dialog-error">{error}</p>}<button className="secondary-button" disabled={busy||value.length<10} onClick={()=>{setBusy(true);setError("");void onCreate(value).then(()=>setValue("")).catch(e=>setError(e instanceof Error?e.message:"Could not save password.")).finally(()=>setBusy(false));}}>{busy?"Saving…":"Save password"}</button></section>;
+}
+export function UnlockModal({reason,onConfirm,onCancel}:{reason:string;onConfirm:(password:string)=>Promise<void>;onCancel:()=>void}){
+ const [value,setValue]=useState("");const [error,setError]=useState("");const [busy,setBusy]=useState(false);
+ const cancel=()=>{if(busy)return;setValue("");onCancel();};
+ return <div className="modal-backdrop" onClick={cancel}><section className="confirm-sheet" role="dialog" aria-modal="true" aria-labelledby="unlock-title" onClick={e=>e.stopPropagation()}><button className="close-modal" aria-label="Cancel" disabled={busy} onClick={cancel}>×</button><h2 id="unlock-title">Unlock to continue</h2><p>{reason}</p><label className="field">Unlock password<input autoFocus type="password" autoComplete="current-password" value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&value.length>=10)void submit();}}/></label>{error&&<p role="alert" className="dialog-error">{error}</p>}<div className="action-pair"><button className="secondary-button" disabled={busy} onClick={cancel}>Cancel</button><button className="primary-button" disabled={busy||value.length<10} onClick={()=>void submit()}>{busy?"Checking…":"Confirm"}</button></div></section></div>;
+ async function submit(){setBusy(true);setError("");try{await onConfirm(value);setValue("");}catch(e){setError(e instanceof Error?e.message:"Unlock failed.");}finally{setBusy(false);}}
+}

@@ -14,6 +14,7 @@ import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope
 import { fetchLiveQuote } from "./quotes.js";
 import { teeSigner } from "./tee/signer.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
+import { getMarketAgent, listMarketAgents } from "./marketplace.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -97,7 +98,18 @@ app.post("/api/discover/events",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({itemType:z.enum(["app","game","earn"]),itemId:z.string().min(1).max(120)}).parse(req.body);await pool.query("INSERT INTO discover_events(user_id,item_type,item_id,action) VALUES($1,$2,$3,'open')",[req.userId,body.itemType,body.itemId]);res.status(201).json({recorded:true});
 }));
 
+app.get("/api/market/agents",requireSession,asyncRoute(async(req,res)=>{
+  const query=typeof req.query.query==="string"?req.query.query.slice(0,100):"";const category=typeof req.query.category==="string"?req.query.category.slice(0,80):"";
+  let offset=0;if(typeof req.query.cursor==="string"){try{offset=Number(Buffer.from(req.query.cursor,"base64url").toString("utf8"));}catch{return fail(res,400,"Invalid marketplace cursor.");}}
+  if(!Number.isSafeInteger(offset)||offset<0||offset>100_000)return fail(res,400,"Invalid marketplace cursor.");
+  try{res.setHeader("Cache-Control","private, max-age=60");res.json(await listMarketAgents({query,category,offset,limit:12}));}catch(error){const status=(error as {status?:number}).status??502;fail(res,status,status===404?"Market listing was not found.":"NEAR Agent Market is temporarily unavailable.");}
+}));
+app.get("/api/market/agents/:id",requireSession,asyncRoute(async(req,res)=>{
+  const id=Array.isArray(req.params.id)?req.params.id[0]!:req.params.id!;try{res.setHeader("Cache-Control","private, max-age=60");res.json({agent:await getMarketAgent(id)});}catch(error){const status=(error as {status?:number}).status??502;fail(res,status,status===404?"Market listing was not found.":"NEAR Agent Market is temporarily unavailable.");}
+}));
+
 async function requirePassword(req: Request, supplied?: string): Promise<boolean> {
+  // Unlock passwords are 10–128 characters; verify against the per-user salted scrypt hash and never persist the plaintext.
   const row = await pool.query<{password_salt:string|null,password_hash:string|null}>("SELECT password_salt,password_hash FROM users WHERE id=$1",[req.userId]);
   const password = z.string().min(10).max(128).safeParse(supplied ?? req.get("x-pocket-password") ?? "");
   if (!row.rows[0]?.password_hash || !row.rows[0].password_salt || !password.success) return false;
@@ -126,12 +138,23 @@ app.get("/api/auth/me",requireSession,asyncRoute(async (req,res) => {
   const { rows } = await pool.query("SELECT account_id,(password_hash IS NOT NULL) AS password_set,agent_enabled,auto_enabled FROM users WHERE id=$1",[req.userId]);
   res.json({ accountId:rows[0]?.account_id ?? null,passwordSet:rows[0]?.password_set ?? false,agentEnabled:rows[0]?.agent_enabled??false,autoEnabled:rows[0]?.auto_enabled??false });
 }));
+app.get("/api/agent/status",requireSession,asyncRoute(async(req,res)=>{
+  const {rows}=await pool.query<any>(`SELECT u.agent_enabled,u.agent_mode,u.master_lock,u.auto_exec_lock,u.last_run_at,u.last_error,(u.password_hash IS NOT NULL) password_set,p.active policy_active,p.body FROM users u LEFT JOIN policies p ON p.user_id=u.id WHERE u.id=$1`,[req.userId]);const r=rows[0];
+  const events=await pool.query("SELECT event_type,details,created_at FROM execution_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT 10",[req.userId]);
+  res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:r.auto_exec_lock,freeze:Boolean(r.body?.freeze),passwordSet:r.password_set,policyActive:Boolean(r.policy_active),lastRunAt:r.last_run_at,lastError:r.last_error,policy:r.body??null,lastEvents:events.rows});
+}));
 app.put("/api/agent/settings",requireSession,asyncRoute(async(req,res)=>{
-  const body=z.object({agentEnabled:z.boolean().optional(),autoEnabled:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.autoEnabled!==undefined).parse(req.body);
-  if(body.autoEnabled!==undefined&&!await requirePassword(req,body.password))return fail(res,403,"A valid password is required to change auto mode.");
-  if(body.agentEnabled!==undefined)await pool.query("UPDATE users SET agent_enabled=$1,updated_at=now() WHERE id=$2",[body.agentEnabled,req.userId]);
-  if(body.autoEnabled!==undefined)await pool.query("UPDATE users SET auto_enabled=$1,updated_at=now() WHERE id=$2",[body.autoEnabled,req.userId]);
-  const row=await pool.query("SELECT agent_enabled,auto_enabled FROM users WHERE id=$1",[req.userId]);res.json(row.rows[0]);
+  const body=z.object({agentEnabled:z.boolean().optional(),mode:z.enum(["off","notify_only","auto_inside_policy"]).optional(),masterLock:z.boolean().optional(),autoExecLock:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.mode!==undefined||v.masterLock!==undefined||v.autoExecLock!==undefined).parse(req.body);
+  const current=(await pool.query<{master_lock:boolean;auto_exec_lock:boolean;agent_mode:string;agent_enabled:boolean}>("SELECT master_lock,auto_exec_lock,agent_mode,agent_enabled FROM users WHERE id=$1",[req.userId])).rows[0]!;
+  const mode=body.mode??(body.agentEnabled===false?"off":body.agentEnabled===true&&current.agent_mode==="off"?"notify_only":current.agent_mode);
+  // A valid 10–128 character password is required only to enable auto mode or clear either runtime lock.
+  const sensitive=(mode==="auto_inside_policy"&&current.agent_mode!==mode)||(body.masterLock===false&&current.master_lock)||(body.autoExecLock===false&&current.auto_exec_lock);
+  if(sensitive&&!await requirePassword(req,body.password))return fail(res,403,"A valid unlock password is required for this change.");
+  if(mode==="auto_inside_policy"&&body.mode!==undefined){const saved=(await pool.query<{active:boolean;body:unknown}>("SELECT active,body FROM policies WHERE user_id=$1",[req.userId])).rows[0];if(!saved?.active)return fail(res,409,"Sign an active policy before enabling auto mode.");if(policySchema.parse(saved.body).freeze)return fail(res,423,"Emergency freeze active.");}
+  const enabled=body.agentEnabled??(mode!=="off"&&current.agent_enabled);
+  await pool.query("UPDATE users SET agent_enabled=$1,agent_mode=$2,auto_enabled=($2='auto_inside_policy'),master_lock=COALESCE($3,master_lock),auto_exec_lock=COALESCE($4,auto_exec_lock),updated_at=now() WHERE id=$5",[enabled,mode,body.masterLock??null,body.autoExecLock??null,req.userId]);
+  await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({source:"agent-settings",mode,agentEnabled:enabled,masterLock:body.masterLock??current.master_lock,autoExecLock:body.autoExecLock??current.auto_exec_lock})]);
+  const r=(await pool.query("SELECT agent_enabled,agent_mode,master_lock,auto_exec_lock FROM users WHERE id=$1",[req.userId])).rows[0];res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:r.auto_exec_lock});
 }));
 app.post("/api/wallet/challenge",requireSession,asyncRoute(async(req,res)=>{
   const {accountId}=z.object({accountId:z.string().min(2).max(128)}).parse(req.body);
@@ -160,6 +183,9 @@ app.post("/api/security/password",requireSession,asyncRoute(async (req,res) => {
   const {salt,hash} = await makePasswordHash(body.password);
   await pool.query("UPDATE users SET password_salt=$1,password_hash=$2,updated_at=now() WHERE id=$3",[salt,hash,req.userId]);
   res.json({ saved:true });
+}));
+app.post("/api/security/verify",requireSession,asyncRoute(async(req,res)=>{
+  const {password}=z.object({password:z.string().min(10).max(128)}).parse(req.body);if(!await requirePassword(req,password))return fail(res,403,"Unlock password is incorrect.");res.json({unlocked:true});
 }));
 
 app.get("/api/policy",requireSession,asyncRoute(async (req,res) => {
@@ -215,13 +241,17 @@ app.post("/api/quotes",requireSession,asyncRoute(async (req,res) => {
 }));
 
 app.post("/api/agent/evaluate",requireSession,asyncRoute(async (req,res) => {
-  const body = z.object({quoteId:z.string().min(1).max(180),recordPreview:z.boolean().default(false)}).parse(req.body);
+  const body = z.object({quoteId:z.string().min(1).max(180),recordPreview:z.boolean().default(false),userInitiated:z.boolean().default(false)}).parse(req.body);
+  const runtime=(await pool.query<{master_lock:boolean;agent_enabled:boolean;agent_mode:string}>("SELECT master_lock,agent_enabled,agent_mode FROM users WHERE id=$1",[req.userId])).rows[0]!;
+  if(runtime.master_lock)return fail(res,423,"Agent is locked.");
+  if(!body.userInitiated&&(!runtime.agent_enabled||runtime.agent_mode==="off"))return fail(res,409,"Agent monitoring is off.");
   const stored=await pool.query<{quote:QuoteView}>("SELECT quote FROM live_quotes WHERE user_id=$1 AND quote_id=$2",[req.userId,body.quoteId]);
   if(!stored.rowCount)return fail(res,404,"Quote is unknown or belongs to another session. Request a new live quote.");
   const parsedQuote = stored.rows[0]!.quote;
   const {rows} = await pool.query<{body:unknown,active:boolean}>("SELECT body,active FROM policies WHERE user_id=$1",[req.userId]);
   if (!rows[0]?.active) return fail(res,409,"No active signed policy is available.");
   const policy = policySchema.parse(rows[0].body);
+  if(policy.freeze)return fail(res,423,"Emergency freeze active.");
   const now = new Date();
   const dayKey = now.toISOString().slice(0,10);
   const weekKey = `${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
@@ -244,14 +274,19 @@ app.get("/api/portfolio",requireSession,asyncRoute(async (req,res) => {
 }));
 
 app.post("/api/agent/execute",requireSession,asyncRoute(async (req,res) => {
-  const input = z.object({quoteId:z.string().min(1).max(180),password:z.string().min(10).max(128)}).parse(req.body);
+  const input = z.object({quoteId:z.string().min(1).max(180),password:z.string().min(10).max(128),userInitiated:z.boolean().default(false)}).parse(req.body);
   if (!await requirePassword(req,input.password)) return fail(res,403,"Unlock with your password before preparing an action.");
+  const runtime=(await pool.query<{master_lock:boolean;agent_mode:string;agent_enabled:boolean;auto_exec_lock:boolean}>("SELECT master_lock,agent_mode,agent_enabled,auto_exec_lock FROM users WHERE id=$1",[req.userId])).rows[0]!;
+  if(runtime.master_lock)return fail(res,423,"Agent is locked.");
+  if(!input.userInitiated&&(!runtime.agent_enabled||runtime.agent_mode==="off"))return fail(res,409,"Agent execution is off.");
+  if(!input.userInitiated&&runtime.agent_mode==="auto_inside_policy"&&runtime.auto_exec_lock)return fail(res,423,"Auto execution is locked.");
   const stored=await pool.query<{quote:QuoteView}>("SELECT quote FROM live_quotes WHERE user_id=$1 AND quote_id=$2",[req.userId,input.quoteId]);
   if(!stored.rowCount)return fail(res,404,"Quote is unknown or belongs to another session. Request a new live quote.");
   const quote=stored.rows[0]!.quote;
   const {rows}=await pool.query<{body:unknown;active:boolean}>("SELECT body,active FROM policies WHERE user_id=$1",[req.userId]);
   if(!rows[0]?.active)return fail(res,409,"No active signed policy is available.");
   const p=policySchema.parse(rows[0].body);
+  if(p.freeze)return fail(res,423,"Emergency freeze active.");
   const usage=await pool.query<{day_amount:string;week_amount:string}>(`SELECT COALESCE(sum((details->>'amountIn')::numeric) FILTER(WHERE created_at::date=now()::date),0)::text AS day_amount,COALESCE(sum((details->>'amountIn')::numeric) FILTER(WHERE created_at>=date_trunc('week',now())),0)::text AS week_amount FROM execution_events WHERE user_id=$1 AND event_type IN ('submitted','success')`,[req.userId]);
   const now=new Date(),dayKey=now.toISOString().slice(0,10),weekKey=`${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
   const usageValue={dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey,weekKey};

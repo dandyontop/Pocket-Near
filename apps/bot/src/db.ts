@@ -74,6 +74,12 @@ export function migrate(): Promise<void> {
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_enabled BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_mode TEXT NOT NULL DEFAULT 'off' CHECK(agent_mode IN ('off','notify_only','auto_inside_policy'));
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS master_lock BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_exec_lock BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS last_error TEXT;
+    UPDATE users SET agent_mode=CASE WHEN auto_enabled AND agent_enabled THEN 'auto_inside_policy' WHEN agent_enabled THEN 'notify_only' ELSE 'off' END WHERE agent_mode='off' AND (agent_enabled OR auto_enabled);
     ALTER TABLE users ENABLE ROW LEVEL SECURITY;
     ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
     ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;
