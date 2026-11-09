@@ -44,7 +44,7 @@ export type QuoteInput = z.infer<typeof quoteInputSchema>;
 export interface QuoteView {
   id: string; provider: "one-click" | "solver-relay" | "cache";
   originAsset: string; destinationAsset: string; amountIn: string; amountOut: string;
-  amountOutFormatted?: string; route: string[]; fees: Array<{ asset: string; amount: string; kind: string }>;
+  amountOutFormatted?: string; minAmountOut?: string; route: string[]; fees: Array<{ asset: string; amount: string; kind: string }>;
   expiresAt: string; slippageBps: number; stale: boolean; depositAddress?: string;
   raw: Record<string, unknown>;
 }

@@ -11,7 +11,7 @@ import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
 import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
-import { fetchLiveQuote } from "./quotes.js";
+import { fetchLiveQuote, QuoteProviderError, QuoteRequestError } from "./quotes.js";
 import { teeSigner } from "./tee/signer.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
@@ -268,10 +268,28 @@ app.get("/api/assets",asyncRoute(async (_req,res) => {
 }));
 
 app.post("/api/quotes",requireSession,asyncRoute(async (req,res) => {
-  const input = quoteInputSchema.parse(req.body);
+  const parsed = quoteInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    if (field === "amount") return fail(res,400,"Amount must be a positive integer in base units.");
+    if (field === "slippageToleranceBps") return fail(res,400,"Slippage tolerance must be between 1 and 500 basis points.");
+    if (field === "originAsset" || field === "destinationAsset") return fail(res,400,"Choose both assets from the 1-Click asset list.");
+    if (field === "sender") return fail(res,400,"Sender must be the connected NEAR account ID.");
+    if (field === "recipient") return fail(res,400,"Enter a valid recipient address.");
+    if (field === "refundTo") return fail(res,400,"Enter a valid refund address.");
+    return fail(res,400,"The quote request is invalid.");
+  }
+  const input = parsed.data;
   const account = await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);
   if (account.rows[0]?.account_id !== input.sender) return fail(res,403,"Quote sender must be the connected wallet.");
-  const {quote,source} = await fetchLiveQuote(input);
+  let result: Awaited<ReturnType<typeof fetchLiveQuote>>;
+  try {
+    result = await fetchLiveQuote(input);
+  } catch (error) {
+    if (error instanceof QuoteRequestError || error instanceof QuoteProviderError) return fail(res,error.status ?? 400,error.message);
+    throw error;
+  }
+  const {quote,source} = result;
   await pool.query("INSERT INTO live_quotes(user_id,quote_id,quote) VALUES($1,$2,$3) ON CONFLICT(user_id,quote_id) DO UPDATE SET quote=EXCLUDED.quote,created_at=now()",[req.userId,quote.id,JSON.stringify(quote)]);
   res.setHeader("Cache-Control","no-store");
   res.json({quote,source,autoEligible:!quote.stale && Date.parse(quote.expiresAt)>Date.now()});

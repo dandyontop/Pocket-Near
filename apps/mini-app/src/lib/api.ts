@@ -4,7 +4,13 @@ const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const response=await fetch(`${API}${path}`,{...init,credentials:"include",headers:{"content-type":"application/json",...init.headers}});
   if(response.status===204)return undefined as T;
-  const data=await response.json() as T & {error?:string};
+  const text=await response.text();
+  let data:(T & {error?:string})|undefined;
+  try{data=JSON.parse(text) as T & {error?:string};}catch{
+    if(!response.ok)throw new Error(text.trim()||`Request failed (${response.status})`);
+    throw new Error("The API returned an invalid response.");
+  }
+  if(!data)throw new Error("The API returned an empty response.");
   if(!response.ok&&!(path==="/api/agent/execute"&&Boolean((data as {requiresWalletSignature?:boolean}).requiresWalletSignature)))throw new Error(data.error??`Request failed (${response.status})`);
   return data;
 }

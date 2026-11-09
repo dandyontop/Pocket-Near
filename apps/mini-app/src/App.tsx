@@ -9,6 +9,7 @@ import { connectWallet, disconnectWallet, getConnector, signPolicy, type WalletA
 
 type Tab="Home"|"Watch"|"Swap"|"Discover"|"You";
 const fmt=(amount:string,decimals:number)=>{try{const n=BigInt(amount),base=10n**BigInt(decimals);if(decimals===0)return n.toString();const fraction=(n%base).toString().padStart(decimals,"0").slice(0,4).replace(/0+$/g,"");return fraction?`${n/base}.${fraction}`:(n/base).toString();}catch{return "0";}};
+const fmtExact=(amount:string,decimals:number)=>{try{const n=BigInt(amount),base=10n**BigInt(decimals);if(decimals===0)return n.toString();const fraction=(n%base).toString().padStart(decimals,"0").replace(/0+$/g,"");return fraction?`${n/base}.${fraction}`:(n/base).toString();}catch{return amount;}};
 const toBase=(value:string,decimals:number)=>{const [whole="0",fraction=""]=value.trim().split(".");if(!/^\d+$/.test(whole)||fraction.length>decimals||!/^\d*$/.test(fraction))throw new Error(`Enter at most ${decimals} decimal places.`);return (BigInt(whole)*10n**BigInt(decimals)+BigInt((fraction+"0".repeat(decimals)).slice(0,decimals)||"0")).toString();};
 const short=(s:string)=>s.length>24?`${s.slice(0,10)}…${s.slice(-8)}`:s;
 const DEFAULT_WINDOW={days:[0,1,2,3,4,5,6],start:"00:00",end:"23:59",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"};
@@ -120,18 +121,26 @@ export default function App(){
   useEffect(()=>{if(!notice)return;const id=window.setTimeout(()=>setNotice(""),4500);return()=>window.clearTimeout(id);},[notice]);
 
   const fetchQuote=useCallback(async(userInitiated=true):Promise<QuoteView|null>=>{
-    if(!account||!from||!to)return null;
+    if(!account||!from||!to){setError("Connect a wallet and select both assets before requesting a quote.");return null;}
+    setError("");
+    setQuote(null);
+    setDecision(null);
     setExecutionStatus(null);
+    setBusy(true);
     try{
       const isNear=(asset:Asset)=>asset.blockchain.toLowerCase()==="near";
       const target=recipient||(isNear(to)?account.accountId:"");
       const refund=refundTo||(isNear(from)?account.accountId:"");
       if(!target||!refund)throw new Error("Enter the destination and refund addresses for the selected chains before requesting a quote.");
-      const input:QuoteInput={originAsset:from.assetId,destinationAsset:to.assetId,amount:toBase(amount,from.decimals),sender:account.accountId,refundTo:refund,recipient:target,slippageToleranceBps:Number(maxSlippage)};
+      const baseAmount=toBase(amount,from.decimals);
+      if(BigInt(baseAmount)<=0n)throw new Error("Enter an amount greater than zero.");
+      const slippage=Number(maxSlippage);
+      if(!Number.isInteger(slippage)||slippage<1||slippage>500)throw new Error("Slippage tolerance must be between 1 and 500 basis points.");
+      const input:QuoteInput={originAsset:from.assetId,destinationAsset:to.assetId,amount:baseAmount,sender:account.accountId,refundTo:refund,recipient:target,slippageToleranceBps:slippage};
       const data=await api.quote(input);setQuote(data.quote);
       if(policy){const result=await api.evaluate(data.quote.id,false,userInitiated);setDecision(result.decision);if(!result.decision.allowed){await api.events().then(v=>setEvents(v.events));}}
       return data.quote;
-    }catch(e){setError(e instanceof Error?e.message:"Could not load a live quote.");return null;}
+    }catch(e){setError(e instanceof Error?e.message:"Could not load a live quote.");return null;}finally{setBusy(false);}
   },[account,from,to,amount,maxSlippage,policy,recipient,refundTo]);
 
   const connect=async()=>{setBusy(true);setError("");try{const a=await connectWallet();const challenge=await api.walletChallenge(a.accountId);const signed=await signPolicy(challenge.message,challenge.recipient,challenge.nonce);await api.walletVerify({...signed,payload:{message:challenge.message,recipient:challenge.recipient,nonce:challenge.nonce}});setAccount(a);setNotice(`Connected ${a.accountId}`);await loadDashboard();}catch(e){setError(e instanceof Error?e.message:"Wallet connection failed.");}finally{setBusy(false);}};
@@ -244,7 +253,7 @@ export default function App(){
           {from&&from.blockchain.toLowerCase()!=="near"&&<label className="field chain-address">Refund address · {from.blockchain}<input value={refundTo} onChange={e=>setRefundTo(e.target.value)} placeholder={`Your ${from.blockchain} address`} autoComplete="off"/></label>}
           <label className="amount-label">Amount<input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} aria-label="Amount"/><span>{from?.symbol??""}</span></label>
           <button className="primary-button" onClick={()=>void fetchQuote()} disabled={!account||busy||!assetsReady}>{busy?<span className="loader small"/>:<Sparkles size={16}/>}Get live quote</button>
-          {quote&&<div className="quote-result"><div className="result-head"><div><span className="eyebrow">ESTIMATED OUTPUT</span><strong>{quote.amountOutFormatted??fmt(quote.amountOut,to?.decimals??0)} <small>{to?.symbol}</small></strong></div><span className={`quote-state ${quote.stale?"stale":""}`}><i/>{quote.stale?"Cached":"Live"}</span></div><div className="quote-details"><div><span>Route</span><b>{quote.route.join(" → ")}</b></div><div><span>Fees</span><b>{quote.fees.length?quote.fees.map(f=>`${f.amount} ${f.asset}`).join(", "):"Included in quote"}</b></div><div><span>Slippage</span><b>{(quote.slippageBps/100).toFixed(2)}%</b></div><div><span>Expires</span><b><Clock3 size={12}/>{new Date(quote.expiresAt).toLocaleTimeString()}</b></div></div><div className={`policy-status ${decision?.allowed?"ok":"blocked"}`}><Shield size={15}/><span>{decision?.allowed?"Inside policy · wallet confirmation still required":decision?.reason??"Policy match pending"}</span></div><button className="preview-button" onClick={()=>void runAgent()} disabled={busy||!policy}>Review policy preview <ArrowRight size={14}/></button></div>}
+          {quote&&<div className="quote-result"><div className="result-head"><div><span className="eyebrow">ESTIMATED OUTPUT</span><strong>{quote.amountOutFormatted??fmt(quote.amountOut,to?.decimals??0)} <small>{to?.symbol}</small></strong></div><span className={`quote-state ${quote.stale?"stale":""}`}><i/>{quote.stale?"Stale · cache":`Live · ${quote.provider}`}</span></div><div className="quote-details"><div><span>Route</span><b>{quote.route.length?quote.route.map(routePart=>assets.find(asset=>asset.assetId===routePart)?.symbol??routePart).join(" → "):"Not provided by 1-Click"}</b></div><div><span>Fees</span><b>{quote.fees.length?quote.fees.map(f=>{const feeAsset=assets.find(asset=>asset.assetId===f.asset);return `${fmtExact(f.amount,feeAsset?.decimals??0)} ${feeAsset?.symbol??f.asset} ${f.kind}`;}).join(", "):"Fee detail not provided by 1-Click"}</b></div>{quote.minAmountOut&&<div><span>Minimum output</span><b>{fmt(quote.minAmountOut,to?.decimals??0)} {to?.symbol}</b></div>}<div><span>Slippage</span><b>{(quote.slippageBps/100).toFixed(2)}%</b></div><div><span>Expires</span><b><Clock3 size={12}/>{new Date(quote.expiresAt).toLocaleTimeString()}</b></div><div><span>Quote source</span><b>{quote.stale?"Stale cache":quote.provider}</b></div></div><div className={`policy-status ${decision?.allowed?"ok":"blocked"}`}><Shield size={15}/><span>{decision?.allowed?"Inside policy · wallet confirmation still required":decision?.reason??"Policy match pending"}</span></div><button className="preview-button" onClick={()=>void runAgent()} disabled={busy||!policy}>Review policy preview <ArrowRight size={14}/></button></div>}
           {quote&&<button className="secondary-button share-preview" onClick={sharePreview}><ArrowUpRight size={14}/>Share quote preview</button>}
           {executionStatus&&<div className={`execution-status ${executionStatus.kind}`} role="status"><strong>{executionStatus.kind==="signed"?"TEE preview signed":executionStatus.kind==="off"?"TEE off · fail-closed":"Execution error"}</strong><span>{executionStatus.message}</span></div>}
           {!quote&&<div className="quote-empty"><Activity size={18}/><span>{account?"Request a quote to see current solver pricing":"Connect a wallet to request a quote"}</span></div>}

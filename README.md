@@ -51,7 +51,7 @@ The five tabs share one authenticated Mini App session. Watch displays only the 
    node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
    ```
 
-   Set that value as `SESSION_SECRET`. Configure `TELEGRAM_BOT_TOKEN`, `ONE_CLICK_JWT`, and `PUBLIC_APP_URL`. For Telegram testing, set `PUBLIC_APP_URL` to your HTTPS tunnel or deployment URL, and set `ALLOWED_ORIGINS` to the Mini App origin.
+   Set that value as `SESSION_SECRET`. Configure `TELEGRAM_BOT_TOKEN` and `PUBLIC_APP_URL`. `ONE_CLICK_JWT` is optional for public 1-Click dry quotes. For Telegram testing, set `PUBLIC_APP_URL` to your HTTPS tunnel or deployment URL, and set `ALLOWED_ORIGINS` to the Mini App origin.
 
 3. Install packages and start the API and Mini App:
 
@@ -79,6 +79,12 @@ The five tabs share one authenticated Mini App session. Watch displays only the 
 4. Open **Watch** to see policy chips and available live price context. Tap a pair's **Swap this pair** action; in **Swap**, set amount and any required destination/refund address, request a quote, and inspect output, route, fees, expiry, and allow/block decision.
 5. Use the ephemeral unlock prompt to prepare a policy-approved preview. The UI distinguishes TEE-off/error from a TEE-signed preview and states that no quote was submitted or settled. Share a quote preview through Telegram's in-app link handler; the tweet intent says it is not submitted and does not claim a fill.
 6. In **You**, verify the full wallet `accountId` identity and inspect profile, security, locks, policy, and agent events. **Discover** shows meme assets/votes only when backed by the current Intents token catalog; otherwise it says Coming soon. Quests also say Coming soon. Check curated apps, prices, Earn, games, and NEAR Agent Market there. `/status`, `/lock`, and `/unlock` remain the Telegram control plane; chat never collects passwords.
+
+### Verifying live dry quotes
+
+In the Telegram Mini App, connect a wallet, open **Swap**, choose assets from the live Intents asset list, enter a positive amount, and tap **Get live quote**. For the USDC (NEAR) → wNEAR (NEAR) example, enter `10`; the API converts it to the 6-decimal base-unit amount `10000000`. Also check the reverse wNEAR → USDC route with `0.1`, and USDC → USDT with `10`. The request uses full Intents asset IDs, the connected account as `sender`, and the account as `recipient`/`refundTo` for NEAR-chain legs. The UI shows the provider's output, minimum output and fee fields when present, expiry, provider, and stale-cache status; it does not invent a route when 1-Click omits route data.
+
+The adapter reads output from `quote.amountOut` (and `quote.amountOutFormatted` for display), minimum output from `quote.minAmountOut`, fees from `quote.refundFee` and `quote.withdrawFee`, and provider expiry from `quote.deadline` or other recognized expiry fields. A `dry: true` response normally omits `quote.deadline`; when the output amount is valid, the adapter assigns a client-derived 55-second preview expiry. This is not a settlement deadline. A recent successful quote may be returned as visibly stale cache only after a retryable live-provider failure.
 
 ## Deploying to Vercel
 
@@ -110,7 +116,7 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `TELEGRAM_BOT_TOKEN` | BotFather token; absent disables bot startup |
 | `TELEGRAM_WEBHOOK_URL` | Optional full webhook URL; absent uses development long polling |
 | `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook secret token |
-| `ONE_CLICK_JWT` | Server-side NEAR Intents partner JWT; never send this to the browser |
+| `ONE_CLICK_JWT` | Optional server-side NEAR Intents partner JWT; public dry quotes are attempted without it; never send it to the browser |
 | `ONE_CLICK_BASE_URL` | 1Click API base URL |
 | `SOLVER_RELAY_URL` | Official Message Bus JSON-RPC endpoint |
 | `NEAR_RPC_URL` | NEAR RPC endpoint used to validate wallet signatures |
