@@ -71,6 +71,45 @@ export type MarketAgentCard=z.infer<typeof marketAgentCardSchema>;
 export const marketAgentDetailSchema=marketAgentCardSchema.extend({description:z.string(),bioMarkdown:z.string().optional(),deliveredJobs:z.number().nonnegative().optional(),successRate:z.number().min(0).max(1).optional(), responseTimeSeconds:z.number().nonnegative().optional()});
 export type MarketAgentDetail=z.infer<typeof marketAgentDetailSchema>;
 
+export const networkOverviewPairSchema=z.object({
+  pair:z.string(),
+  originAsset:z.string(),
+  destinationAsset:z.string(),
+  volumeUsd:z.number().nonnegative().finite(),
+  txCount:z.number().int().nonnegative(),
+  label:z.string().optional(),
+});
+export const networkOverviewAssetSchema=z.object({
+  asset:z.string(),
+  volumeUsd:z.number().nonnegative().finite(),
+  txCount:z.number().int().nonnegative(),
+  label:z.string().optional(),
+});
+export const networkOverviewSchema=z.object({
+  windowStart:z.string().datetime(),
+  windowEnd:z.string().datetime(),
+  volumeUsd24h:z.number().nonnegative().finite(),
+  txCount24h:z.number().int().nonnegative(),
+  statusCounts24h:z.record(z.number().int().nonnegative()),
+  successRate24h:z.number().min(0).max(1).finite(),
+  topPairs24h:z.array(networkOverviewPairSchema),
+  topOrigins24h:z.array(networkOverviewAssetSchema).optional(),
+  topDestinations24h:z.array(networkOverviewAssetSchema).optional(),
+  peers:z.array(z.object({
+    id:z.string(),
+    name:z.string(),
+    metricKind:z.enum(["fees24h","volume24h"]),
+    valueUsd:z.number().nonnegative().finite().nullable(),
+    source:z.string(),
+    note:z.string().optional(),
+  })).optional(),
+  source:z.literal("near-intents-explorer"),
+  updatedAt:z.string().datetime(),
+  partial:z.boolean(),
+  methodology:z.string(),
+});
+export type NetworkOverview=z.infer<typeof networkOverviewSchema>;
+
 export const curatedExploreApps: ExploreApp[] = [
   {id:"ref-finance",name:"Rhea Finance",slug:"rhea-finance",category:"DeFi",blurb:"NEAR decentralized exchange and liquidity markets.",url:"https://rhea.finance",featured:true},
   {id:"burrow",name:"Burrow",slug:"burrow",category:"DeFi",blurb:"Lending and borrowing markets on NEAR.",url:"https://app.burrow.finance",featured:true},

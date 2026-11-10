@@ -15,6 +15,7 @@ import { fetchLiveQuote, QuoteProviderError, QuoteRequestError } from "./quotes.
 import { teeSigner } from "./tee/signer.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
+import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -58,6 +59,16 @@ const requireSession = asyncRoute(async (req,res,next) => {
 
 app.get("/api/prices",requireSession,asyncRoute(async(_req,res)=>{
   const data=await getPrices();res.setHeader("Cache-Control","private, max-age=30");res.json(data);
+}));
+app.get("/api/network/overview",requireSession,asyncRoute(async(_req,res)=>{
+  try{
+    const data=await getNetworkOverview();
+    res.setHeader("Cache-Control","private, max-age=300");
+    res.json(data);
+  }catch(error){
+    if(error instanceof NetworkOverviewError)return fail(res,error.status,error.message);
+    throw error;
+  }
 }));
 app.get("/api/prices/watchlist",requireSession,asyncRoute(async(req,res)=>{
   const {rows}=await pool.query<{symbol:string}>("SELECT symbol FROM price_watchlist WHERE user_id=$1 ORDER BY created_at",[req.userId]);res.json({symbols:rows.map(r=>r.symbol)});

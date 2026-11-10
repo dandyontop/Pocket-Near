@@ -1,0 +1,19 @@
+.network-overview-card{margin:15px 0;padding:15px;border:1px solid #e8ece6;border-radius:17px;background:#fff;box-shadow:0 5px 18px #1b362908}
+.network-overview-heading{display:flex;align-items:center;justify-content:space-between}
+.network-overview-heading .eyebrow{margin-bottom:4px}
+.network-overview-heading h2{margin:0;font:600 16px 'Space Grotesk';letter-spacing:-.03em}
+.network-overview-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:14px 0 9px}
+.network-overview-stats>div{display:grid;gap:4px;padding:9px 7px;border-radius:10px;background:#f7f9f6;min-width:0}
+.network-overview-stats span,.network-overview-window,.network-overview-methodology,.network-overview-message,.network-overview-note{color:#78857b;font-size:9px;line-height:1.5}
+.network-overview-stats strong{font:600 13px 'Space Grotesk';overflow-wrap:anywhere}
+.network-overview-window{margin:0 0 12px}
+.network-overview-pairs{display:grid;gap:8px}
+.network-overview-pairs>strong{font-size:10px}
+.network-overview-pair{display:flex;justify-content:space-between;align-items:center;gap:9px;font-size:9px}
+.network-overview-pair span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#647268}
+.network-overview-pair b{flex:0 0 auto;font-size:9px}
+.network-overview-methodology{margin:12px 0 0}
+.network-overview-note{margin:9px 0 0;color:#9a7432}
+.network-overview-error{display:grid;gap:8px;margin-top:12px;color:#a94b3b;font-size:10px}
+.network-overview-error .secondary-button{width:max-content}
+.network-overview-message{margin:12px 0 0}

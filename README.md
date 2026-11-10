@@ -28,6 +28,12 @@ PostgreSQL stores Telegram account IDs, NEAR account IDs, signed policy envelope
 
 The five tabs share one authenticated Mini App session. Watch shows all pairs in the active signed policy first, then separates live market prices from the Intents-backed memecoin board; it never requests trade quotes. Swap is the only screen that requests 1Click quotes. Discover separates curated apps, DeFi/earn and game links from NEAR Agent Market listings. Marketplace detail and hire links stay on Market's buyer flow. Me shows the full NEAR `accountId` as the Pocket identity, the multi-pair policy editor (up to 30 signed pairs), My Agent controls and account safety. Quests are marked coming soon and have no rewards or completion logic. Catalog results are cached for 60–120 seconds, default 90. Pocket Near does not reproduce Agent Market escrow, disputes, or payouts. Telegram workers only run in a persistent bot process; Vercel serverless functions do not keep intervals alive.
 
+## Intents network overview
+
+The Home card reads `GET /api/network/overview`, a session-protected aggregate from the authenticated NEAR Intents Explorer transactions endpoint. Set `EXPLORER_JWT` only in the API server environment; it is never sent to or bundled with the Mini App. The server applies Explorer's transaction timestamp filters and computes volume from `amountInUsd`, transaction/status counts, `SUCCESS / txCount` as a 0–1 success rate, and the highest-volume pairs and assets for a rolling 24-hour window. The response includes the exact ISO `windowStart` / `windowEnd`, aggregation time, and methodology string.
+
+Successful aggregates are kept in process memory for 10 minutes and concurrent refreshes are shared. Explorer permits one request per partner every five seconds; requests for additional pages are paced accordingly. A maximum of two 1,000-row pages are read for a refresh. `partial: true` means that pagination hit a cap, a needed cursor/timestamp was unavailable, or a returned row could not be timestamped; it is not represented as full-window coverage. Expired cache is not served on upstream failure: the endpoint returns a clear 502/503 error instead. Metrics are omitted until `EXPLORER_JWT` is configured. The optional DefiLlama peer strip is not enabled.
+
 ## Requirements
 
 - Node.js 20.11 or later
@@ -120,6 +126,7 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook secret token |
 | `ONE_CLICK_JWT` | Optional server-side NEAR Intents partner JWT; public dry quotes are attempted without it; never send it to the browser |
 | `ONE_CLICK_BASE_URL` | 1Click API base URL |
+| `EXPLORER_JWT` | Required server-only bearer JWT for NEAR Intents Explorer network metrics; never expose to the Mini App |
 | `SOLVER_RELAY_URL` | Official Message Bus JSON-RPC endpoint |
 | `NEAR_RPC_URL` | NEAR RPC endpoint used to validate wallet signatures |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed by CORS |

@@ -10,6 +10,7 @@ const schema = z.object({
   SESSION_SECRET: z.string().min(32), COOKIE_SECURE: z.string().default("false").transform(v=>v.toLowerCase()==="true"),
   TELEGRAM_BOT_TOKEN: z.string().default(""), TELEGRAM_WEBHOOK_SECRET: z.string().default(""), TELEGRAM_WEBHOOK_URL:z.preprocess(v=>v===""?undefined:v,z.string().url().optional()),
   ONE_CLICK_JWT: z.string().default(""), ONE_CLICK_BASE_URL: z.string().url().default("https://1click.chaindefuser.com"),
+  EXPLORER_JWT: z.string().default(""),
   NEAR_RPC_URL: z.string().url().default("https://rpc.mainnet.near.org"),
   SOLVER_RELAY_URL: z.string().url().default("https://solver-relay-v2.chaindefuser.com/rpc"),
   ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),

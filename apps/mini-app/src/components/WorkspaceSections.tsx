@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowRight, Bot, Heart, Pause, Play, RefreshCw, Search, Shield, Sparkles, Trash2, TrendingUp, Wallet } from "lucide-react";
 import type { AgentPolicy, Asset, MemeBoard, MemeVote, PriceRow } from "@pocket-near/shared";
+import { NetworkOverviewCard } from "./NetworkOverviewCard.js";
 
 type HomeScreenProps = {
   accountId: string | null;
@@ -31,6 +32,7 @@ export function HomeScreen({accountId,nativeBalance,balanceError,policy,policyAc
       <button className="home-quick-card" onClick={()=>onNavigate("You")}><span className="discover-icon"><Bot size={17}/></span><strong>My Agent</strong><small>{policy?.freeze?"Frozen":agentOn?autoOn?"Auto inside policy":"Notify only":"Off"}</small></button>
       <button className="home-quick-card" onClick={()=>onNavigate("Watch")}><span className="discover-icon"><Shield size={17}/></span><strong>Policy pairs</strong><small>{policy&&policyActive?`${policy.allowedPairs.length} signed pair${policy.allowedPairs.length===1?"":"s"}`:"No active signed policy"}</small></button>
     </div>
+    <NetworkOverviewCard/>
     <div className="section-heading compact"><div><p className="eyebrow">UP NEXT</p><h2>Quests</h2></div><Sparkles size={17}/></div>
     <article className="coming-soon-card"><strong>Quests are coming soon</strong><span>There are no rewards or completion tracking yet.</span></article>
     <button className="primary-button" onClick={()=>onNavigate(policy?"Watch":"You")}>{policy?"Review your watch pairs":"Create and sign a policy"} <ArrowRight size={15}/></button>

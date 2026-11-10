@@ -1,4 +1,4 @@
-import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote } from "@pocket-near/shared";
+import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 async function request<T>(path:string,init:RequestInit={}):Promise<T>{
@@ -35,6 +35,7 @@ export const api={
   events:()=>request<{events:Array<{event_type:string;details:Record<string,unknown>;created_at:string}>}>("/api/events"),
   portfolio:()=>request<{accountId:string;balances:Array<{assetId:string;symbol:string;amount:string;decimals:number;locked:string;source:string;blockHeight:number}>;failures:string[]}>("/api/portfolio"),
   prices:()=>request<{rows:PriceRow[];source:string;updatedAt:string}>("/api/prices"),
+  networkOverview:()=>request<NetworkOverview>("/api/network/overview"),
   watchlist:()=>request<{symbols:string[]}>("/api/prices/watchlist"),
   saveWatchlist:(symbols:string[])=>request<{symbols:string[]}>("/api/prices/watchlist",{method:"PUT",body:JSON.stringify({symbols})}),
   alerts:()=>request<{alerts:Array<{id:number;symbol:string;op:"gte"|"lte";thresholdUsd:number;active:boolean;createdAt:string}>}>("/api/prices/alerts"),
