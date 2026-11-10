@@ -6,6 +6,19 @@ type Wallet = { signMessage:(args:{message:string;recipient:string;nonce:Uint8Ar
 let connector:NearConnector|undefined;
 let activeWallet:Wallet|undefined;
 export function getConnector(){return connector??=(new NearConnector({features:{signMessage:true,testnet:false}}));}
+export async function restoreWallet():Promise<WalletAccount|null>{
+  try{
+    const {wallet,accounts}=await getConnector().getConnectedWallet();
+    const account=accounts[0];
+    if(!account)return null;
+    activeWallet=wallet as Wallet;
+    return {accountId:account.accountId,...(account.publicKey?{publicKey:account.publicKey}:{})};
+  }catch(error){
+    const message=error instanceof Error?error.message:"";
+    if(message==="No wallet selected"||message==="No accounts found"){activeWallet=undefined;return null;}
+    throw error;
+  }
+}
 export async function connectWallet():Promise<WalletAccount>{
   const c=getConnector();
   let resolveAccount:(value:WalletAccount)=>void=()=>{};
@@ -29,5 +42,6 @@ export async function signPolicy(message:string,recipient:string,nonce:string):P
   return signed;
 }
 export async function disconnectWallet(){
-  if(connector){await connector.disconnect();activeWallet=undefined;}
+  activeWallet=undefined;
+  if(connector)await connector.disconnect();
 }
