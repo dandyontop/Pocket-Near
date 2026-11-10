@@ -126,7 +126,7 @@ function normalize(raw: unknown, input: QuoteInput, stale = false, dry = true): 
   }
   const quote = asObj(root.quote ?? raw);
   const output = quote.amountOut ?? quote.amount_out ?? quote.expectedAmountOut ?? quote.expected_amount_out
-    ?? quote.minAmountOut ?? quote.min_amount_out ?? root.amountOut ?? root.amount_out;
+    ?? root.amountOut ?? root.amount_out;
   const amountOut = str(output);
   if (!/^[1-9]\d*$/.test(amountOut)) {
     throw new QuoteProviderError(providerErrorMessage ?? "The 1-Click provider returned no valid output amount.");
