@@ -19,6 +19,8 @@ import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
 import { timingSafeEqual } from "node:crypto";
 import { getRheaPositions } from "./rheaPositions.js";
 import { runScheduledWorker } from "./scheduledWorker.js";
+import { checkRheaRouteRegistration, getRheaFrozenTokenSet, getRheaMarkets, getRheaSwapQuote } from "./rheaMarkets.js";
+import { getNearStablePools } from "./investmentPools.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -87,6 +89,11 @@ app.put("/api/investments/preferences",requireSession,asyncRoute(async(req,res)=
   [req.userId,body.alertsEnabled,symbols,body.positionMonitoring,body.reportFrequency,24/body.reportFrequency,reportChanged||!current]);
   res.json({preferences:rows[0]});
 }));
+app.get("/api/investments/opportunities",requireSession,asyncRoute(async(_req,res)=>{
+  const data=await getNearStablePools();
+  res.setHeader("Cache-Control","private, max-age=60");
+  res.json({...data,source:"Rhea public pool index + GeckoTerminal 24h market data + current token prices",disclaimer:"Indicative 24h fee run-rate is a backward-looking annualized estimate for eligible non-CLMM pools. It is not a forecast, official Rhea APR, or financial advice; excludes impermanent loss and token price changes."});
+}));
 app.get("/api/positions",requireSession,asyncRoute(async(req,res)=>{
   const user=(await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId])).rows[0];
   if(!user?.account_id)return res.json({positions:[],source:"Intear indexed Rhea deposits",height:null,coverage:"Connect a NEAR wallet to detect Rhea deposits."});
@@ -147,19 +154,8 @@ app.post("/api/discover/events",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({itemType:z.enum(["app","game","earn"]),itemId:z.string().min(1).max(120)}).parse(req.body);await pool.query("INSERT INTO discover_events(user_id,item_type,item_id,action) VALUES($1,$2,$3,'open')",[req.userId,body.itemType,body.itemId]);res.status(201).json({recorded:true});
 }));
 
-const knownMemeCoinGeckoIds=new Set(["based-brett","dogecoin","official-trump","pepe","shiba-inu"]);
-async function getMemeAssets(){
-  const response=await fetch(`${env.ONE_CLICK_BASE_URL}/v0/tokens`,{signal:AbortSignal.timeout(10_000)});
-  if(!response.ok)throw Object.assign(new Error("Supported asset directory is temporarily unavailable."),{status:502});
-  const data:unknown=await response.json();
-  if(!Array.isArray(data))throw Object.assign(new Error("Supported asset directory returned an invalid response."),{status:502});
-  return data.map(item=>{
-    const value=item as Record<string,unknown>;
-    return {assetId:String(value.assetId??""),symbol:String(value.symbol??""),name:String(value.name??""),decimals:Number(value.decimals),blockchain:String(value.blockchain??""),coingeckoId:String(value.coingeckoId??"")};
-  }).filter(asset=>asset.assetId&&asset.symbol&&Number.isInteger(asset.decimals)&&asset.decimals>=0&&asset.decimals<=30&&knownMemeCoinGeckoIds.has(asset.coingeckoId)).slice(0,100);
-}
 app.get("/api/meme/board",requireSession,asyncRoute(async(req,res)=>{
-  const assets=await getMemeAssets();
+  const assets=await getRheaMarkets();
   if(!assets.length)return res.json({status:"coming_soon",assets:[]});
   const {rows}=await pool.query<{asset_id:string;bull_votes:string;bear_votes:string;user_vote:"bull"|"bear"|null}>(
     `SELECT asset_id,
@@ -178,8 +174,8 @@ app.get("/api/meme/board",requireSession,asyncRoute(async(req,res)=>{
 }));
 app.put("/api/meme/vote",requireSession,asyncRoute(async(req,res)=>{
   const {assetId,vote}=z.object({assetId:z.string().min(1).max(160),vote:z.enum(["bull","bear"])}).parse(req.body);
-  const asset=(await getMemeAssets()).find(candidate=>candidate.assetId===assetId);
-  if(!asset)return fail(res,404,"This asset is not in the current Intents meme list.");
+  const asset=(await getRheaMarkets()).find(candidate=>candidate.assetId===assetId);
+  if(!asset)return fail(res,404,"This token is not in the current NEAR Rhea market list.");
   await pool.query("INSERT INTO meme_votes(user_id,asset_id,vote) VALUES($1,$2,$3) ON CONFLICT(user_id,asset_id) DO UPDATE SET vote=EXCLUDED.vote,updated_at=now()",[req.userId,assetId,vote]);
   res.json({saved:true});
 }));
@@ -312,8 +308,33 @@ app.get("/api/assets",asyncRoute(async (_req,res) => {
     const v = item as Record<string,unknown>;
     return {assetId:String(v.assetId ?? ""),symbol:String(v.symbol ?? ""),name:String(v.name ?? ""),decimals:Number(v.decimals),blockchain:String(v.blockchain ?? "")};
   }).filter(a => a.assetId && a.symbol && Number.isInteger(a.decimals) && a.decimals >= 0 && a.decimals <= 30).slice(0,1000);
+  try{for(const market of await getRheaMarkets())if(!assets.some(asset=>asset.assetId===market.assetId))assets.push({assetId:market.assetId,symbol:market.symbol,name:market.name,decimals:market.decimals,blockchain:"near"});}catch{/* The main Intents asset list remains usable when the market index is down. */}
   res.setHeader("Cache-Control","public, max-age=60, stale-while-revalidate=240");
   res.json({assets});
+}));
+
+app.get("/api/rhea/pools",requireSession,asyncRoute(async(_req,res)=>{
+  try{const markets=await getRheaMarkets();res.setHeader("Cache-Control","private, max-age=45");res.json({markets,source:"GeckoTerminal Rhea pools + Rhea on-chain frozen-token list",updatedAt:new Date().toISOString(),coverage:"Tokens in the first five Rhea pool pages sorted by 24-hour volume"});}
+  catch(error){fail(res,(error as {status?:number}).status??502,"Rhea pool market data is temporarily unavailable.");}
+}));
+
+app.post("/api/rhea/quote",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({originAsset:z.string().min(1).max(160),destinationAsset:z.string().min(1).max(160),amount:z.string().regex(/^[1-9]\d{0,77}$/),sender:z.string().min(2).max(128),slippageToleranceBps:z.number().int().min(1).max(500)}).parse(req.body);
+  const account=await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);
+  if(account.rows[0]?.account_id!==body.sender)return fail(res,403,"Quote sender must be the connected wallet.");
+  const contract=(asset:string)=>asset.startsWith("near:")?asset.slice(5):null;
+  const tokenIn=contract(body.originAsset),tokenOut=contract(body.destinationAsset);
+  if(!tokenIn||!tokenOut||tokenIn===tokenOut)return fail(res,400,"Rhea quotes require two different NEAR token contracts.");
+  const markets=await getRheaMarkets();
+  if(!markets.some(m=>m.assetId===body.originAsset)||!markets.some(m=>m.assetId===body.destinationAsset))return fail(res,422,"Both tokens must currently have an indexed NEAR or stablecoin Rhea pool.");
+  const frozen=await getRheaFrozenTokenSet();
+  if(frozen?.has(tokenIn.toLowerCase())||frozen?.has(tokenOut.toLowerCase()))return fail(res,409,"Rhea has frozen one of these tokens. Swap execution is blocked.");
+  try{
+    const route=await getRheaSwapQuote({amount:body.amount,tokenIn,tokenOut,user:body.sender,slippageBps:body.slippageToleranceBps});
+    const registration=await checkRheaRouteRegistration(body.sender,route.tokens);
+    const quote:QuoteView={id:`rhea-${randomUUID()}`,provider:"rhea",originAsset:body.originAsset,destinationAsset:body.destinationAsset,amountIn:route.amount_in,amountOut:route.amount_out,minAmountOut:route.min_amount_out,route:route.tokens,fees:[],expiresAt:new Date(Date.now()+30_000).toISOString(),slippageBps:body.slippageToleranceBps,stale:false,raw:{...route,receiverId:"aggregatedex.near",inputToken:tokenIn,accountId:body.sender,registration}};
+    res.setHeader("Cache-Control","no-store");res.json({quote,source:"Rhea SmartRouter",autoEligible:false});
+  }catch(error){fail(res,(error as {status?:number}).status??502,error instanceof Error?error.message:"Rhea route lookup failed.");}
 }));
 
 app.post("/api/quotes",requireSession,asyncRoute(async (req,res) => {

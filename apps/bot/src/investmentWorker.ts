@@ -40,12 +40,14 @@ async function sendPoolSuggestion(user:Preference,notify:WorkerNotify):Promise<b
   if(!claimed.rowCount)return false;
   const poolLabel=opportunity.symbols.join(" / ");
   const fee=opportunity.feeBps===null?"fee data unavailable":`${(opportunity.feeBps/100).toFixed(2)}% swap fee`;
+  const feeRunRate=opportunity.feeApr24hRunRatePct===null?"Fee APR unavailable from the verified pool data.":`Indicative 24h fee run-rate: ${opportunity.feeApr24hRunRatePct.toFixed(2)}% annualized (recent volume × fee × 80% LP share ÷ TVL). This is not a forecast or realized account yield.`;
   const text=[
     `Pocket Near pool alert: ${poolLabel} on Rhea`,
     `Reported pool TVL: ${usd(opportunity.tvlUsd)} · ${fee}`,
-    `APR is unavailable from this data source; no return estimate is shown. Data is from ${new Date(opportunity.updatedAt).toLocaleString("en-US",{timeZone:"UTC",dateStyle:"medium",timeStyle:"short"})} UTC.`,
+    feeRunRate,
+    `Pool type: ${opportunity.poolType??"not classified"} · 24h volume: ${opportunity.volume24hUsd===null?"unavailable":usd(opportunity.volume24hUsd)}. Data is from ${new Date(opportunity.updatedAt).toLocaleString("en-US",{timeZone:"UTC",dateStyle:"medium",timeStyle:"short"})} UTC.`,
     opportunity.url,
-    "Automated data alert, not financial advice. Prices, pool balances, and returns can change; liquidity positions can lose value or be liquidated if managed poorly.",
+    "Not financial advice. Fee run-rate changes as trading, fees and TVL change; it excludes impermanent loss, token-price movement, depegs, CLMM range risk and reward-token incentives. Your position may lose value and requires active management.",
   ].join("\n");
   try{await notify(Number(user.telegram_id),text);return true;}
   catch(error){await pool.query("UPDATE investment_preferences SET last_suggestion_at=NULL WHERE user_id=$1 AND last_suggestion_at=$2",[user.user_id,claimed.rows[0]!.last_suggestion_at]);throw error;}

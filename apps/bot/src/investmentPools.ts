@@ -1,5 +1,6 @@
 import { env } from "./env.js";
 import { getPrices } from "./dataFeeds.js";
+import { getRheaPoolSignals } from "./rheaMarkets.js";
 
 export type NearStablePool={
   id:string;
@@ -9,7 +10,9 @@ export type NearStablePool={
   symbols:string[];
   tvlUsd:number;
   feeBps:number|null;
-  aprPct:null;
+  feeApr24hRunRatePct:number|null;
+  volume24hUsd:number|null;
+  poolType:string|null;
   updatedAt:string;
   url:string;
 };
@@ -36,15 +39,17 @@ function tokenAmount(raw:string|undefined,decimals:number):number{
   const value=Number(raw)/10**decimals;
   return Number.isFinite(value)?value:0;
 }
+function contractId(assetId:string):string{return assetId.startsWith("nep141:")?assetId.slice(7):assetId;}
 
 async function loadPools():Promise<{pools:NearStablePool[];updatedAt:string;source:string}>{
   if(poolCache&&poolCache.until>Date.now())return poolCache.value;
   if(poolRequest)return poolRequest;
   poolRequest=(async()=>{
-    const [indexResponse,assetsResponse,priceData]=await Promise.all([
+    const [indexResponse,assetsResponse,priceData,marketPools]=await Promise.all([
       fetch("https://api.rhea.finance/fetchAllPools",{signal:AbortSignal.timeout(12_000)}),
       fetch(`${env.ONE_CLICK_BASE_URL}/v0/tokens`,{signal:AbortSignal.timeout(10_000)}),
       getPrices(),
+      getRheaPoolSignals(),
     ]);
     if(!indexResponse.ok)throw new Error(`Rhea pool index returned ${indexResponse.status}.`);
     if(!assetsResponse.ok)throw new Error(`Supported asset directory returned ${assetsResponse.status}.`);
@@ -73,7 +78,12 @@ async function loadPools():Promise<{pools:NearStablePool[];updatedAt:string;sour
       if(!priced||!Number.isFinite(tvlUsd)||tvlUsd<=0)continue;
       const symbols=tokenAssets.map(asset=>asset.symbol==="WNEAR"?"NEAR":asset.symbol);
       const kind=row.pool_kind??"RHEA_POOL";
-      pools.push({id:`${kind.toLowerCase()}:${row.id}`,poolId:String(row.id),kind,tokens:tokenIds,symbols,tvlUsd,feeBps:typeof row.fee==="number"?row.fee:null,aprPct:null,updatedAt:typeof index.block_time==="number"?new Date(index.block_time).toISOString():nowIso(),url:"https://app.rhea.finance/pools"});
+      const contracts=tokenIds.map(contractId).sort();
+      const market=marketPools.find(candidate=>candidate.contracts.map(value=>value.toLowerCase()).sort().join("|")===contracts.map(value=>value.toLowerCase()).join("|"));
+      const volume=market?.volume24hUsd??null;
+      const feePct=market?.poolFeePct??(typeof row.fee==="number"?row.fee/100:null);
+      const feeApr24hRunRatePct=market&&volume!==null&&feePct!==null&&market.liquidityUsd&&market.poolType&&market.poolType!=="CLMM"?volume*(feePct/100)*0.8*365/market.liquidityUsd*100:null;
+      pools.push({id:`${kind.toLowerCase()}:${row.id}`,poolId:String(row.id),kind,tokens:tokenIds,symbols,tvlUsd,feeBps:typeof row.fee==="number"?row.fee:null,feeApr24hRunRatePct:feeApr24hRunRatePct!==null&&Number.isFinite(feeApr24hRunRatePct)?feeApr24hRunRatePct:null,volume24hUsd:volume,poolType:market?.poolType??null,updatedAt:typeof index.block_time==="number"?new Date(index.block_time).toISOString():nowIso(),url:market?.poolUrl??"https://app.rhea.finance/pools"});
     }
     pools.sort((a,b)=>b.tvlUsd-a.tvlUsd);
     const data={pools,updatedAt:typeof index.block_time==="number"?new Date(index.block_time).toISOString():nowIso(),source:"Rhea public pool index + current market prices"};
