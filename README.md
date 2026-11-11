@@ -160,7 +160,7 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 - Five-tab product surface: authenticated prices, watchlists, price alerts, DefiLlama NEAR protocols, curated app and game links, Agent Market CTAs, and activity history.
 - Ephemeral create/unlock password dialogs; runtime agent modes and locks persisted on users; public NEAR Agent Market listing, detail, and price proxy.
 - CoinGecko and DefiLlama server-side caches, curated fallback data for Earn and Explore, and a persistent-host Telegram price-alert worker with daily firing deduplication.
-- Vercel Schedules primary worker tick (every 10 minutes) and an hourly GitHub Actions fallback/manual dispatch. Both call the same bearer-authenticated API endpoint; a PostgreSQL advisory lock prevents overlapping ticks.
+- Vercel Schedules primary worker tick (every 30 minutes) and an hourly GitHub Actions fallback/manual dispatch. Both call the same bearer-authenticated API endpoint; a PostgreSQL advisory lock prevents overlapping ticks.
 - Opt-in NEAR/USDC/USDT pool discovery using Rhea pool reserves, token metadata, and current prices. Rhea's public pool feed has no APR field, so suggestions show reserve-derived TVL and omit APR and projected returns.
 - Me-tab visibility for detected Rhea internal LP token deposits and optional periodic monitoring (1–4 reports per day). Balance changes are not labeled as yield. Rhea farms and concentrated-liquidity NFT positions are outside current indexer coverage.
 - Telegram `/prices` and `/alerts` commands; the session cookie uses `SameSite=None; Secure` for secure deployments and `SameSite=Lax` locally. Browser API calls include credentials.
