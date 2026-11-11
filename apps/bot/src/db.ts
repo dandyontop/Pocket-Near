@@ -78,6 +78,34 @@ export function migrate(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY(user_id,asset_id)
     );
+    CREATE TABLE IF NOT EXISTS investment_preferences (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      alerts_enabled BOOLEAN NOT NULL DEFAULT false,
+      symbols TEXT[] NOT NULL DEFAULT ARRAY['NEAR','USDC','USDT']::TEXT[],
+      position_monitoring BOOLEAN NOT NULL DEFAULT false,
+      report_frequency SMALLINT NOT NULL DEFAULT 1 CHECK(report_frequency BETWEEN 1 AND 4),
+      last_suggestion_at TIMESTAMPTZ,
+      last_report_at TIMESTAMPTZ,
+      next_position_report_at TIMESTAMPTZ,
+      last_position_check_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS investment_preferences_worker_idx ON investment_preferences(position_monitoring,last_position_check_at) WHERE position_monitoring=true;
+    CREATE TABLE IF NOT EXISTS position_snapshots (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      position_id TEXT NOT NULL,
+      token_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      amount_raw TEXT NOT NULL,
+      reported_amount_raw TEXT NOT NULL,
+      decimals SMALLINT NOT NULL CHECK(decimals BETWEEN 0 AND 30),
+      value_usd NUMERIC,
+      first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(user_id,position_id)
+    );
+    CREATE INDEX IF NOT EXISTS position_snapshots_user_idx ON position_snapshots(user_id,observed_at DESC);
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_enabled BOOLEAN NOT NULL DEFAULT false;
@@ -97,6 +125,8 @@ export function migrate(): Promise<void> {
     ALTER TABLE price_alert_firings ENABLE ROW LEVEL SECURITY;
     ALTER TABLE discover_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE meme_votes ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE investment_preferences ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE position_snapshots ENABLE ROW LEVEL SECURITY;
   `);
       await client.query("COMMIT");
     }catch(error){

@@ -160,6 +160,9 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 - Five-tab product surface: authenticated prices, watchlists, price alerts, DefiLlama NEAR protocols, curated app and game links, Agent Market CTAs, and activity history.
 - Ephemeral create/unlock password dialogs; runtime agent modes and locks persisted on users; public NEAR Agent Market listing, detail, and price proxy.
 - CoinGecko and DefiLlama server-side caches, curated fallback data for Earn and Explore, and a persistent-host Telegram price-alert worker with daily firing deduplication.
+- Vercel Schedules primary worker tick (every 10 minutes) and an hourly GitHub Actions fallback/manual dispatch. Both call the same bearer-authenticated API endpoint; a PostgreSQL advisory lock prevents overlapping ticks.
+- Opt-in NEAR/USDC/USDT pool discovery using Rhea pool reserves, token metadata, and current prices. Rhea's public pool feed has no APR field, so suggestions show reserve-derived TVL and omit APR and projected returns.
+- Me-tab visibility for detected Rhea internal LP token deposits and optional periodic monitoring (1–4 reports per day). Balance changes are not labeled as yield. Rhea farms and concentrated-liquidity NFT positions are outside current indexer coverage.
 - Telegram `/prices` and `/alerts` commands; the session cookie uses `SameSite=None; Secure` for secure deployments and `SameSite=Lax` locally. Browser API calls include credentials.
 
 ## Current scope limits
@@ -167,7 +170,9 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 - 1Click quotes are pricing/deposit instructions. The integration currently requests dry quotes and does not submit deposits.
 - The app does not claim that a cached quote is live or eligible for execution.
 - The portfolio currently reads the connected account's unlocked native NEAR balance through public NEAR RPC. NEAR Intents token balances need a user-scoped authorization flow; a shared partner JWT is not treated as user authorization.
-- Price-target Telegram alerts require a Telegram bot and a persistent host with `AGENT_WORKER_ENABLED=true`; Vercel functions do not run durable workers. Fill alerts and balance-change alerts require a user-scoped balance and execution service.
+- Price-target Telegram alerts and investment reports require `TELEGRAM_BOT_TOKEN`, a configured `CRON_SECRET`, database connectivity, and the Vercel Schedules or GitHub Actions caller. For the fallback, add repository secrets `POCKET_NEAR_API_URL` (API deployment origin) and `POCKET_NEAR_WORKER_SECRET` (same value as `CRON_SECRET`). GitHub scheduled workflows can be delayed during load; Vercel is the primary schedule.
+- Investment discovery uses Rhea's public pool index, 1Click token metadata, and CoinGecko prices. It limits suggestions to indexed NEAR and USDC/USDT pools. The public Rhea index does not supply pool APR, and no APR or future returns are inferred. Intear balance indexing identifies Rhea internal deposits, but this path does not expose Rhea farm stakes or concentrated-liquidity NFT positions. Reports describe observed balance deltas, not earnings.
+- Pool-level APY is available for some NEAR pools from DeFiLlama Yields, including Rhea entries, but its free yield endpoints are scheduled to shut down on November 13, 2026 and the replacement requires a paid API plan. Those records are not yet reliably mapped to every Rhea pool-index ID, so the worker does not use protocol-level rates as if they were a particular pool's APR.
 - Portfolio balances are not inferred from the shared partner JWT. Intents balance access requires a user-scoped authorization flow.
 - The account policy is signed off-chain and checked by this API; it is not enforced by the Intents Verifier contract.
 - Auto mode can request a constrained TEE signature only when configured. Settlement and transfer submission are unsupported, so the feature stops before funds move. Clearing `master_lock` or `auto_exec_lock`, enabling `auto_inside_policy`, and signing a changed policy require a valid password. Turning a lock on and changing notify/off mode do not.
@@ -191,3 +196,7 @@ No API secret, full private key, or signing key belongs in `.env` or PostgreSQL.
 - [Solver Relay JSON-RPC reference](https://docs.near-intents.org/integration/market-makers/message-bus/rpc)
 - [Verifier account keys and signature flow](https://docs.near-intents.org/integration/verifier-contract/account-abstraction)
 - [Telegram Mini App launch-data validation](https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app)
+- [Rhea pooling documentation](https://guide.rhea.finance/near-chain-guides/how-rhea-finance-works/pooling)
+- [Intear balance API documentation](https://docs.intear.tech/api/reference/balances/)
+- [Vercel Schedules](https://vercel.com/changelog/vercel-schedules-is-now-in-public-beta)
+- [GitHub Actions scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)

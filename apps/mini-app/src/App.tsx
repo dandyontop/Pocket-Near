@@ -10,6 +10,8 @@ import { PolicyEditor } from "./components/PolicyEditor.js";
 import { connectWallet, disconnectWallet, getConnector, restoreWallet, signPolicy, type WalletAccount } from "./lib/wallet.js";
 
 type Tab="Home"|"Watch"|"Swap"|"Discover"|"Explore"|"You";
+type InvestmentPreferences={alertsEnabled:boolean;symbols:string[];positionMonitoring:boolean;reportFrequency:number;lastSuggestionAt:string|null;nextPositionReportAt:string|null};
+type TrackedPosition={id:string;tokenId:string;symbol:string;amount:string;decimals:number;valueUsd:number|null};
 const disconnectedWalletKey="pocket-near:disconnected-wallet";
 const fmt=(amount:string,decimals:number)=>{try{const n=BigInt(amount),base=10n**BigInt(decimals);if(decimals===0)return n.toString();const fraction=(n%base).toString().padStart(decimals,"0").slice(0,4).replace(/0+$/g,"");return fraction?`${n/base}.${fraction}`:(n/base).toString();}catch{return "0";}};
 const fmtExact=(amount:string,decimals:number)=>{try{const n=BigInt(amount),base=10n**BigInt(decimals);if(decimals===0)return n.toString();const fraction=(n%base).toString().padStart(decimals,"0").replace(/0+$/g,"");return fraction?`${n/base}.${fraction}`:(n/base).toString();}catch{return amount;}};
@@ -62,6 +64,12 @@ export default function App(){
   const [priceSource,setPriceSource]=useState("");
   const [watchlist,setWatchlist]=useState<string[]>([]);
   const [alerts,setAlerts]=useState<Array<{id:number;symbol:string;op:"gte"|"lte";thresholdUsd:number;active:boolean;createdAt:string}>>([]);
+  const [investmentPrefs,setInvestmentPrefs]=useState<InvestmentPreferences>({alertsEnabled:false,symbols:["NEAR","USDC","USDT"],positionMonitoring:false,reportFrequency:1,lastSuggestionAt:null,nextPositionReportAt:null});
+  const [savingInvestmentPrefs,setSavingInvestmentPrefs]=useState(false);
+  const [positions,setPositions]=useState<TrackedPosition[]>([]);
+  const [positionsCoverage,setPositionsCoverage]=useState("");
+  const [positionsLoading,setPositionsLoading]=useState(false);
+  const [positionsError,setPositionsError]=useState("");
   const [priceSearch,setPriceSearch]=useState("");
   const [alertSymbol,setAlertSymbol]=useState("BTC");
   const [alertOp,setAlertOp]=useState<"gte"|"lte">("gte");
@@ -107,9 +115,9 @@ export default function App(){
         }
       }
     }else setAccount(null);
-    const [assetData,policyData,eventData,alertData]=await Promise.all([api.assets(),api.policy(),api.events(),api.alerts()]);
+    const [assetData,policyData,eventData,alertData,investmentData]=await Promise.all([api.assets(),api.policy(),api.events(),api.alerts(),api.investmentPreferences()]);
     const sorted=assetData.assets.sort((a,b)=>a.symbol.localeCompare(b.symbol));
-    setAssets(sorted);setAssetsReady(true);setPolicy(policyData.policy?.body??null);setPolicyActive(policyData.policy?.active??false);setEvents(eventData.events);setAlerts(alertData.alerts);
+    setAssets(sorted);setAssetsReady(true);setPolicy(policyData.policy?.body??null);setPolicyActive(policyData.policy?.active??false);setEvents(eventData.events);setAlerts(alertData.alerts);setInvestmentPrefs(investmentData.preferences);
     setDestinationInput(policyData.policy?.body.allowedDestinations.join(", ")??me.accountId??"");
     if(policyData.policy?.body){const saved=policyData.policy.body;const primary=saved.allowedPairs[0];const savedFrom=sorted.find(a=>a.assetId===primary?.from);setPolicyPairs(saved.allowedPairs);if(primary){setFromId(primary.from);setToId(primary.to);}if(savedFrom){setMaxTrade(fmt(saved.maxTradeAmount,savedFrom.decimals));setDaily(fmt(saved.dailyLimit,savedFrom.decimals));setWeekly(fmt(saved.weeklyLimit,savedFrom.decimals));}setMaxSlippage(String(saved.maxSlippageBps));if(saved.timeWindows[0]){setWindowStart(saved.timeWindows[0].start);setWindowEnd(saved.timeWindows[0].end);}}
     if(sorted.length){const defaultFrom=sorted.find(a=>a.symbol.toLowerCase().includes("near"))?.assetId||sorted[0]!.assetId;const defaultTo=sorted.find(a=>a.symbol.toLowerCase().includes("usdc"))?.assetId||sorted[Math.min(1,sorted.length-1)]!.assetId;setFromId(current=>current||defaultFrom);setToId(current=>current||defaultTo);if(!policyData.policy?.body)setPolicyPairs([{from:defaultFrom,to:defaultTo}]);}
@@ -244,6 +252,8 @@ export default function App(){
     }
   };
   const refreshEvents=async()=>{try{setEvents((await api.events()).events);}catch(e){setError(e instanceof Error?e.message:"Could not refresh activity.");}};
+  const refreshPositions=async()=>{setPositionsLoading(true);setPositionsError("");try{const result=await api.positions();setPositions(result.positions);setPositionsCoverage(result.coverage);}catch(e){setPositionsError(e instanceof Error?e.message:"Could not load NEAR positions.");}finally{setPositionsLoading(false);}};
+  const saveInvestmentPrefs=async()=>{setSavingInvestmentPrefs(true);try{const result=await api.saveInvestmentPreferences({alertsEnabled:investmentPrefs.alertsEnabled,symbols:investmentPrefs.symbols,positionMonitoring:investmentPrefs.positionMonitoring,reportFrequency:investmentPrefs.reportFrequency});setInvestmentPrefs(result.preferences);setNotice("Investment alerts and position reporting settings saved.");}catch(e){setError(e instanceof Error?e.message:"Could not save investment settings.");}finally{setSavingInvestmentPrefs(false);}};
   const safeToggleAgent=async()=>{if(!policy||!policyActive){setError("Sign an active policy before activating the agent.");setTab("You");return;}if(policy.freeze){setError("Emergency freeze is active. Sign an updated policy to resume.");return;}try{const next=!agentOn;await api.agentSettings({agentEnabled:next});setAgentOn(next);setNotice(next?"Agent monitoring. Matches are notified on Telegram.":"Agent paused.");}catch(e){setError(e instanceof Error?e.message:"Could not update agent state.");}};
   const toggleAuto=async(unlockPassword:string)=>{const next=!autoOn;const settings=await api.agentSettings({mode:next?"auto_inside_policy":"notify_only",...(next?{agentEnabled:true}:{}),...(next?{password:unlockPassword}:{})});setAgentOn(settings.agentEnabled);setAutoOn(settings.mode==="auto_inside_policy");setNotice(next?"Auto mode enabled inside the signed policy.":"Auto mode disabled.");};
   const toggleMasterLock=async(unlockPassword?:string)=>{const next=!masterLock;const settings=await api.agentSettings({masterLock:next,...(unlockPassword?{password:unlockPassword}:{})});setMasterLock(settings.masterLock);setNotice(next?"Agent locked.":"Agent unlocked.");};
@@ -251,7 +261,7 @@ export default function App(){
   const loadPrices=async()=>{setWatchLoading(true);try{const [market,watch,alertData]=await Promise.all([api.prices(),api.watchlist(),api.alerts()]);setPrices(market.rows);setPriceSource(market.source);setWatchlist(watch.symbols);setAlerts(alertData.alerts);}catch(e){setError(e instanceof Error?e.message:"Market data could not be loaded.");}finally{setWatchLoading(false);}};
   const loadDiscover=async()=>{setDiscoverLoading(true);setDiscoverError("");try{const [earnData,appData,gameData]=await Promise.all([api.earn(),api.apps(),api.games()]);setEarn(earnData.protocols);setEarnSource(earnData.source);setApps(appData.apps);setGames(gameData.games);}catch(e){const message=e instanceof Error?e.message:"Explore data could not be loaded.";setDiscoverError(message);setError(message);}finally{setDiscoverLoading(false);}};
   const loadMemeBoard=async()=>{try{setMemeBoard(await api.memeBoard());setMemeBoardError("");}catch(e){const message=e instanceof Error?e.message:"Meme asset data could not be loaded.";setMemeBoardError(message);setError(message);}};
-  useEffect(()=>{if(tab==="Explore")void loadDiscover();if(tab==="You")void refreshEvents();},[tab]);
+  useEffect(()=>{if(tab==="Explore")void loadDiscover();if(tab==="You"){void refreshEvents();void refreshPositions();}},[tab]);
   useEffect(()=>{if(tab!=="Watch")return;let active=true;const refresh=()=>{if(active){void loadPrices();void loadMemeBoard();}};refresh();const id=window.setInterval(refresh,30_000);return()=>{active=false;window.clearInterval(id);};},[tab]);
   useEffect(()=>{if(!account){setNativeBalance(null);setPortfolioError("");return;}let active=true;void api.portfolio().then(data=>{if(!active)return;const near=data.balances.find(b=>b.symbol==="NEAR");setNativeBalance(near?fmt(near.amount,near.decimals):null);setPortfolioError(data.failures.join(" "));}).catch(e=>{if(active)setPortfolioError(e instanceof Error?e.message:"NEAR balance is unavailable.");});return()=>{active=false;};},[account?.accountId]);
   const toggleWatch=async(symbol:string)=>{const next=watchlist.includes(symbol)?watchlist.filter(s=>s!==symbol):[...watchlist,symbol];setWatchlist(next);try{const saved=await api.saveWatchlist(next);setWatchlist(saved.symbols);}catch(e){setWatchlist(watchlist);setError(e instanceof Error?e.message:"Watchlist update failed.");}};
@@ -283,7 +293,6 @@ export default function App(){
           <p className="meme-disclaimer">Community votes are social only and never affect policies, agent decisions or execution.</p>
         </section>
         <section className="discover-feature"><div className="section-heading compact"><div><p className="eyebrow">AGENT MARKET</p><h2>Discover NEAR agents</h2></div></div><p>Browse live listings inside You, or open the official marketplace in Telegram.</p><button className="secondary-button" onClick={()=>setTab("You")}>Browse agent listings <ArrowRight size={14}/></button><button className="secondary-button" onClick={()=>openExternal("https://market.near.ai")}>Open market.near.ai <ArrowUpRight size={14}/></button></section>
-        <article className="coming-soon-card discover-quest"><strong>Quests are coming soon</strong><span>Quest logic, rewards and completion are not available.</span></article>
       </>}
       {tab==="Swap"&&<>
         <section className="greeting"><div><p className="eyebrow">YOUR ACCOUNT</p><h1>Good to see you.</h1></div><div className="secure-pill"><span/> Non-custodial</div></section>
@@ -312,8 +321,19 @@ export default function App(){
       </>}
       {tab==="You"&&<>
         <section className="profile-card"><p className="eyebrow">WALLET PROFILE</p><h2>Pocket name</h2><strong>{profileAccountId??"No wallet connected"}</strong><span>Your NEAR account ID is your identity in Pocket Near. No social username is used.</span>{account&&<button className="subtle-button" disabled={busy} onClick={()=>void disconnect()}>Disconnect wallet</button>}</section>
+        <section className="form-card investment-settings">
+          <div className="section-heading compact"><div><p className="eyebrow">INVESTMENT MONITORING</p><h2>Pool alerts and positions</h2></div><TrendingUp size={17}/></div>
+          <p className="meme-disclaimer">Optional Rhea alerts show NEAR and stablecoin pool composition, reserve based TVL, and the pool fee when available. APR and return projections are not available from this data source.</p>
+          <label className="investment-choice"><input type="checkbox" checked={investmentPrefs.alertsEnabled} onChange={event=>setInvestmentPrefs(current=>({...current,alertsEnabled:event.target.checked}))}/><span><strong>Send pool alerts</strong><small>At most one suggestion every 48 hours.</small></span></label>
+          <div className="chip-row" aria-label="Investment alert tokens">{["NEAR","USDC","USDT"].map(symbol=><label className={`chip ${investmentPrefs.symbols.includes(symbol)?"active":""}`} key={symbol}><input type="checkbox" checked={investmentPrefs.symbols.includes(symbol)} onChange={event=>setInvestmentPrefs(current=>({...current,symbols:event.target.checked?[...new Set([...current.symbols,symbol])]:current.symbols.filter(item=>item!==symbol)}))}/>{symbol}</label>)}</div>
+          <label className="investment-choice"><input type="checkbox" checked={investmentPrefs.positionMonitoring} onChange={event=>setInvestmentPrefs(current=>({...current,positionMonitoring:event.target.checked}))}/><span><strong>Monitor my Rhea deposits</strong><small>Check balances periodically and send position reports.</small></span></label>
+          <label className="field">Position reports<select value={investmentPrefs.reportFrequency} onChange={event=>setInvestmentPrefs(current=>({...current,reportFrequency:Number(event.target.value)}))}><option value={1}>Once per day</option><option value={2}>Twice per day</option><option value={3}>Three times per day</option><option value={4}>Four times per day</option></select></label>
+          <p className="investment-disclaimer">Reports show detected balance changes, not earned yield. Rhea farm positions and concentrated-liquidity NFT positions are not currently covered. Alerts are automated data, not financial advice. Prices and APRs can change; pool positions can lose value and may be liquidated if not managed well.</p>
+          <button className="primary-button" disabled={savingInvestmentPrefs} onClick={()=>void saveInvestmentPrefs()}>{savingInvestmentPrefs?"Saving…":"Save investment settings"}</button>
+        </section>
+        <div className="section-heading compact"><div><p className="eyebrow">RHEA DEPOSITS</p><h2>Detected positions</h2></div><button className="icon-button light" aria-label="Refresh detected positions" onClick={()=>void refreshPositions()} disabled={positionsLoading}><RefreshCw size={15}/></button></div>
+        {positionsLoading?<div className="empty-activity"><span className="loader"/><strong>Checking Rhea deposits…</strong></div>:positionsError?<div className="alert error"><span>{positionsError}</span><button onClick={()=>void refreshPositions()}>Retry</button></div>:positions.length===0?<div className="empty-activity"><Wallet size={22}/><strong>No Rhea deposits detected</strong><span>{positionsCoverage||"Connect a wallet or add liquidity in a supported Rhea pool."}</span></div>:<><div className="market-list">{positions.map(position=><article className="market-row" key={position.id}><div className="coin-mark">{position.symbol.slice(0,1)}</div><div className="market-name"><strong>{fmtExact(position.amount,position.decimals)} {position.symbol}</strong><span>{position.tokenId}</span></div><div className="market-price"><strong>{position.valueUsd===null?"Value unavailable":usd(position.valueUsd)}</strong><span>Rhea deposit</span></div></article>)}</div><p className="meme-disclaimer">{positionsCoverage}</p></>}
         <PolicyEditor assets={assets} accountId={profileAccountId} pairs={policyPairs} onPairsChange={setPolicyPairs} defaultFrom={fromId} defaultTo={toId} maxTrade={maxTrade} setMaxTrade={setMaxTrade} daily={daily} setDaily={setDaily} weekly={weekly} setWeekly={setWeekly} maxSlippage={maxSlippage} setMaxSlippage={setMaxSlippage} destinationInput={destinationInput} setDestinationInput={setDestinationInput} windowStart={windowStart} setWindowStart={setWindowStart} windowEnd={windowEnd} setWindowEnd={setWindowEnd} busy={busy} passwordSet={passwordSet} canSign={Boolean(account)} hasPolicy={Boolean(policy)} frozen={Boolean(policy?.freeze)} onSign={()=>requestUnlock("Unlock to authorize this policy change",savePolicy)} onFreeze={()=>requestUnlock(policy?.freeze?"Unlock to resume the agent":"Unlock to update the signed policy and activate emergency freeze",toggleFreeze)}/>
-        <article className="coming-soon-card profile-quests"><strong>Quests are coming soon</strong><span>No rewards or completion tracking are active.</span></article>
         <>
         <section className="page-title"><p className="eyebrow">AGENT SETTINGS</p><h1>Set your guardrails.</h1><p>Every amount and destination is checked before the agent evaluates a quote.</p></section>
         {!account&&<div className="alert info"><Wallet size={17}/>Connect your wallet before creating a signed policy.</div>}

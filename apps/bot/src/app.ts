@@ -16,6 +16,9 @@ import { teeSigner } from "./tee/signer.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
 import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
+import { timingSafeEqual } from "node:crypto";
+import { getRheaPositions } from "./rheaPositions.js";
+import { runScheduledWorker } from "./scheduledWorker.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -56,6 +59,41 @@ const requireSession = asyncRoute(async (req,res,next) => {
     next();
   } catch { fail(res,401,"Session expired. Reopen the Mini App from Telegram."); }
 });
+
+app.get("/api/worker/tick",asyncRoute(async(req,res)=>{
+  const authorization=req.get("authorization")??"";
+  const expected=`Bearer ${env.CRON_SECRET}`;
+  const suppliedBytes=Buffer.from(authorization),expectedBytes=Buffer.from(expected);
+  if(!env.CRON_SECRET||suppliedBytes.length!==expectedBytes.length||!timingSafeEqual(suppliedBytes,expectedBytes))return fail(res,401,"Worker authorization failed.");
+  const result=await runScheduledWorker();
+  res.status(result.errors.length?502:200).json({ok:result.errors.length===0,...result});
+}));
+
+app.get("/api/investments/preferences",requireSession,asyncRoute(async(req,res)=>{
+  const {rows}=await pool.query(`SELECT alerts_enabled AS "alertsEnabled",symbols,position_monitoring AS "positionMonitoring",report_frequency AS "reportFrequency",last_suggestion_at AS "lastSuggestionAt",next_position_report_at AS "nextPositionReportAt" FROM investment_preferences WHERE user_id=$1`,[req.userId]);
+  res.json({preferences:rows[0]??{alertsEnabled:false,symbols:["NEAR","USDC","USDT"],positionMonitoring:false,reportFrequency:1,lastSuggestionAt:null,nextPositionReportAt:null}});
+}));
+app.put("/api/investments/preferences",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({alertsEnabled:z.boolean(),symbols:z.array(z.enum(["NEAR","USDC","USDT"])).max(3),positionMonitoring:z.boolean(),reportFrequency:z.number().int().min(1).max(4)}).parse(req.body);
+  const symbols=[...new Set(body.symbols)];
+  if(body.alertsEnabled&&!symbols.length)return fail(res,400,"Choose at least one token for investment alerts.");
+  const current=(await pool.query<{report_frequency:number;position_monitoring:boolean}>("SELECT report_frequency,position_monitoring FROM investment_preferences WHERE user_id=$1",[req.userId])).rows[0];
+  const reportChanged=Boolean(current&&(current.report_frequency!==body.reportFrequency||current.position_monitoring!==body.positionMonitoring));
+  const {rows}=await pool.query(`INSERT INTO investment_preferences(user_id,alerts_enabled,symbols,position_monitoring,report_frequency,next_position_report_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,CASE WHEN $4 THEN now()+($6::text||' hours')::interval ELSE NULL END,now())
+    ON CONFLICT(user_id) DO UPDATE SET alerts_enabled=EXCLUDED.alerts_enabled,symbols=EXCLUDED.symbols,position_monitoring=EXCLUDED.position_monitoring,report_frequency=EXCLUDED.report_frequency,
+      next_position_report_at=CASE WHEN NOT EXCLUDED.position_monitoring THEN NULL WHEN $7 THEN now()+($6::text||' hours')::interval ELSE investment_preferences.next_position_report_at END,updated_at=now()
+    RETURNING alerts_enabled AS "alertsEnabled",symbols,position_monitoring AS "positionMonitoring",report_frequency AS "reportFrequency",last_suggestion_at AS "lastSuggestionAt",next_position_report_at AS "nextPositionReportAt"`,
+  [req.userId,body.alertsEnabled,symbols,body.positionMonitoring,body.reportFrequency,24/body.reportFrequency,reportChanged||!current]);
+  res.json({preferences:rows[0]});
+}));
+app.get("/api/positions",requireSession,asyncRoute(async(req,res)=>{
+  const user=(await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId])).rows[0];
+  if(!user?.account_id)return res.json({positions:[],source:"Intear indexed Rhea deposits",height:null,coverage:"Connect a NEAR wallet to detect Rhea deposits."});
+  const result=await getRheaPositions(user.account_id);
+  res.setHeader("Cache-Control","private, max-age=60");
+  res.json({...result,coverage:"Rhea internal token deposits only. Rhea farm-staked and concentrated-liquidity NFT positions are not currently included."});
+}));
 
 app.get("/api/prices",requireSession,asyncRoute(async(_req,res)=>{
   const data=await getPrices();res.setHeader("Cache-Control","private, max-age=30");res.json(data);

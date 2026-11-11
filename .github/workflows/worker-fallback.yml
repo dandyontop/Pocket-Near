@@ -1,0 +1,31 @@
+name: Pocket Near worker fallback
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pocket-near-worker
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run scheduled worker
+        env:
+          APP_URL: ${{ secrets.POCKET_NEAR_API_URL }}
+          WORKER_SECRET: ${{ secrets.POCKET_NEAR_WORKER_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$WORKER_SECRET" ]; then
+            echo "Set repository secrets POCKET_NEAR_API_URL and POCKET_NEAR_WORKER_SECRET."
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 5 --retry-all-errors \
+            -H "Authorization: Bearer $WORKER_SECRET" \
+            "$APP_URL/api/worker/tick"

@@ -9,6 +9,7 @@ const schema = z.object({
   PUBLIC_APP_URL: z.string().url(), DATABASE_URL: z.string().default(""), POSTGRES_URL: z.string().default(""), DATABASE_SSL: z.string().default("false").transform(v=>v.toLowerCase()==="true"), DATABASE_SSL_CA: z.string().default(""),
   SESSION_SECRET: z.string().min(32), COOKIE_SECURE: z.string().default("false").transform(v=>v.toLowerCase()==="true"),
   TELEGRAM_BOT_TOKEN: z.string().default(""), TELEGRAM_WEBHOOK_SECRET: z.string().default(""), TELEGRAM_WEBHOOK_URL:z.preprocess(v=>v===""?undefined:v,z.string().url().optional()),
+  CRON_SECRET: z.string().default(""),
   ONE_CLICK_JWT: z.string().default(""), ONE_CLICK_BASE_URL: z.string().url().default("https://1click.chaindefuser.com"),
   EXPLORER_JWT: z.string().default(""),
   NEAR_RPC_URL: z.string().url().default("https://rpc.mainnet.near.org"),
