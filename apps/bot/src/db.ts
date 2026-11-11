@@ -105,6 +105,14 @@ export function migrate(): Promise<void> {
       observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY(user_id,position_id)
     );
+    CREATE TABLE IF NOT EXISTS rhea_position_alert_state (
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      position_id TEXT NOT NULL,
+      can_withdraw BOOLEAN NOT NULL,
+      notified BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(user_id,position_id)
+    );
     CREATE INDEX IF NOT EXISTS position_snapshots_user_idx ON position_snapshots(user_id,observed_at DESC);
     CREATE INDEX IF NOT EXISTS execution_events_user_created_idx ON execution_events(user_id, created_at DESC);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_enabled BOOLEAN NOT NULL DEFAULT false;
@@ -127,6 +135,7 @@ export function migrate(): Promise<void> {
     ALTER TABLE meme_votes ENABLE ROW LEVEL SECURITY;
     ALTER TABLE investment_preferences ENABLE ROW LEVEL SECURITY;
     ALTER TABLE position_snapshots ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE rhea_position_alert_state ENABLE ROW LEVEL SECURITY;
   `);
       await client.query("COMMIT");
     }catch(error){

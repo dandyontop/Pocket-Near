@@ -17,7 +17,7 @@ import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
 import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
 import { timingSafeEqual } from "node:crypto";
-import { getRheaPositions } from "./rheaPositions.js";
+import { getRheaPositions, getRNearYield } from "./rheaPositions.js";
 import { runScheduledWorker } from "./scheduledWorker.js";
 import { checkRheaRouteRegistration, getRheaFrozenTokenSet, getRheaMarkets, getRheaSwapQuote } from "./rheaMarkets.js";
 import { getNearStablePools } from "./investmentPools.js";
@@ -90,16 +90,16 @@ app.put("/api/investments/preferences",requireSession,asyncRoute(async(req,res)=
   res.json({preferences:rows[0]});
 }));
 app.get("/api/investments/opportunities",requireSession,asyncRoute(async(_req,res)=>{
-  const data=await getNearStablePools();
+  const [data,rnear]=await Promise.all([getNearStablePools(),getRNearYield()]);
   res.setHeader("Cache-Control","private, max-age=60");
-  res.json({...data,source:"Rhea public pool index + GeckoTerminal 24h market data + current token prices",disclaimer:"Indicative 24h fee run-rate is a backward-looking annualized estimate for eligible non-CLMM pools. It is not a forecast, official Rhea APR, or financial advice; excludes impermanent loss and token price changes."});
+  res.json({...data,yields:{poolFeeApr:data.pools.map(item=>({poolId:item.poolId,symbols:item.symbols,valuePct:item.feeApr24hRunRatePct,source:"GeckoTerminal 24h volume × pool fee × assumed 80% LP share ÷ indexed TVL × 365",observedAt:item.updatedAt,basis:"Backward-looking annualized run-rate; unavailable for CLMM or unclassified pools"})),rnearStakingApy:{valuePct:rnear.apyPct,source:rnear.source,observedAt:rnear.observedAt,basis:"Rhea-reported staking APY; reward accrues through rNEAR share price"},farmRewardsApr:{valuePct:null,source:null,observedAt:null,basis:"No verified live farm rewards APR source is integrated."},lendingSupplyApy:{valuePct:null,source:null,observedAt:null,basis:"No verified live Rhea lending supply APY source is integrated."}},source:"Rhea public pool index + GeckoTerminal 24h market data + Rhea rNEAR indexer and contract",disclaimer:"Pool fee run-rate is a backward-looking estimate, not Rhea's official APR or a forecast. It uses an assumed 80% LP share and excludes impermanent loss and token price changes. rNEAR staking APY is separately reported by Rhea. Farm rewards APR and lending supply APY are shown unavailable until a verified source is integrated."});
 }));
 app.get("/api/positions",requireSession,asyncRoute(async(req,res)=>{
   const user=(await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId])).rows[0];
   if(!user?.account_id)return res.json({positions:[],source:"Intear indexed Rhea deposits",height:null,coverage:"Connect a NEAR wallet to detect Rhea deposits."});
   const result=await getRheaPositions(user.account_id);
   res.setHeader("Cache-Control","private, max-age=60");
-  res.json({...result,coverage:"Rhea internal token deposits only. Rhea farm-staked and concentrated-liquidity NFT positions are not currently included."});
+  res.json({...result,coverage:"Rhea internal token deposits and rNEAR liquid staking are tracked. Rhea farm-staked positions and concentrated-liquidity NFT positions are not currently included. rNEAR unlock time is unavailable when the contract view does not expose an estimate."});
 }));
 
 app.get("/api/prices",requireSession,asyncRoute(async(_req,res)=>{

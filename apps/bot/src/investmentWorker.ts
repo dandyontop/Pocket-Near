@@ -101,11 +101,28 @@ async function sendPositionReport(user:Preference,positions:Array<{symbol:string
   return true;
 }
 
-export async function runInvestmentWorker(notify:WorkerNotify):Promise<{suggestions:number;positionReports:number;positionsChecked:number;errors:string[]}>{
+async function notifyRNearUnlock(user:Preference,positions:RheaPosition[],notify:WorkerNotify):Promise<number>{
+  let sent=0;
+  for(const position of positions.filter(item=>item.kind==="rnear_pending"&&item.canWithdraw!==null)){
+    const {rows}=await pool.query<{notify:boolean}>(`INSERT INTO rhea_position_alert_state(user_id,position_id,can_withdraw,notified,updated_at)
+      VALUES($1,$2,$3,false,now())
+      ON CONFLICT(user_id,position_id) DO UPDATE SET
+        notified=CASE WHEN rhea_position_alert_state.can_withdraw IS DISTINCT FROM EXCLUDED.can_withdraw THEN false ELSE rhea_position_alert_state.notified END,
+        can_withdraw=EXCLUDED.can_withdraw,updated_at=now()
+      RETURNING can_withdraw AND NOT notified AS notify`,[user.user_id,position.id,position.canWithdraw]);
+    if(!rows[0]?.notify)continue;
+    await notify(Number(user.telegram_id),`Pocket Near rNEAR alert: ${formatUnits(position.amount,position.decimals)} NEAR from your delayed unstake is ready to withdraw. The alert is based on Rhea's can_withdraw view for lst.rhealab.near. Withdrawals require a wallet-signed transaction.`);
+    await pool.query("UPDATE rhea_position_alert_state SET notified=true,updated_at=now() WHERE user_id=$1 AND position_id=$2 AND can_withdraw=true",[user.user_id,position.id]);
+    sent++;
+  }
+  return sent;
+}
+
+export async function runInvestmentWorker(notify:WorkerNotify):Promise<{suggestions:number;positionReports:number;positionsChecked:number;unlockAlerts:number;errors:string[]}>{
   const {rows}=await pool.query<Preference>(`SELECT p.user_id::text,u.telegram_id::text,u.account_id,p.alerts_enabled,p.symbols,p.position_monitoring,p.report_frequency,p.last_position_check_at
     FROM investment_preferences p JOIN users u ON u.id=p.user_id
     WHERE p.alerts_enabled=true OR p.position_monitoring=true ORDER BY p.last_position_check_at NULLS FIRST LIMIT 100`);
-  const result={suggestions:0,positionReports:0,positionsChecked:0,errors:[] as string[]};
+  const result={suggestions:0,positionReports:0,positionsChecked:0,unlockAlerts:0,errors:[] as string[]};
   for(const user of rows){
     try{if(await sendPoolSuggestion(user,notify))result.suggestions++;}
     catch(error){result.errors.push(`Opportunity alert user ${user.user_id}: ${error instanceof Error?error.message:"failed"}`);}
@@ -114,6 +131,7 @@ export async function runInvestmentWorker(notify:WorkerNotify):Promise<{suggesti
     try{
       const current=await getRheaPositions(user.account_id!);
       const snapshots=await savePositionCheck(user,current.positions);result.positionsChecked++;
+      result.unlockAlerts+=await notifyRNearUnlock(user,current.positions,notify);
       if(await sendPositionReport(user,snapshots,notify))result.positionReports++;
     }catch(error){result.errors.push(`Position check user ${user.user_id}: ${error instanceof Error?error.message:"failed"}`);}
   }
