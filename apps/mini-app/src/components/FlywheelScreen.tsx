@@ -8,7 +8,15 @@ const usd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",curren
 const compactUsd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:2}).format(value);
 const number=(value:number)=>new Intl.NumberFormat("en-US").format(value);
 
-export function FlywheelScreen(){
+type FlywheelScreenProps={
+  accountId:string|null;
+  nativeBalance:string|null;
+  busy:boolean;
+  onConnect:()=>void;
+  onStake:(amount:string)=>void;
+};
+
+export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake}:FlywheelScreenProps){
   const [overview,setOverview]=useState<FlywheelOverview|null>(null);
   const [nearPrice,setNearPrice]=useState<number|null>(null);
   const [loading,setLoading]=useState(true);
@@ -16,6 +24,7 @@ export function FlywheelScreen(){
   const [priceNote,setPriceNote]=useState("");
   const [multiplier,setMultiplier]=useState("10");
   const [nearShare,setNearShare]=useState("");
+  const [stakeAmount,setStakeAmount]=useState("");
 
   const refresh=useCallback(async()=>{
     setLoading(true);
@@ -49,6 +58,9 @@ export function FlywheelScreen(){
   const modeledNear=validScenario
     ? overview.network.volumeUsd24h*multiplierValue*(shareValue/100)/nearPrice!
     : null;
+  const stakeAmountValid=/^(?:0|[1-9]\d*)(?:\.\d{1,24})?$/.test(stakeAmount)
+    &&(()=>{const [whole="0",fraction=""]=stakeAmount.split(".");return BigInt(whole)*10n**24n+BigInt(fraction.padEnd(24,"0")||"0")>0n;})();
+  const stakeExceedsBalance=stakeAmountValid&&nativeBalance!==null&&Number(stakeAmount)>Number(nativeBalance);
 
   return <section className="page-title flywheel-screen">
     <div className="flywheel-heading">
@@ -70,6 +82,18 @@ export function FlywheelScreen(){
           <div><span>Success rate</span><strong>{(overview.network.successRate24h*100).toFixed(1)}%</strong></div>
         </div>
         <p className="flywheel-note">This Explorer total covers all integrators. It is not Pocket Near-attributed volume.</p>
+      </section>
+
+      <section className="flywheel-card">
+        <div className="section-heading compact"><div><p className="eyebrow">RHEA LIQUID STAKING</p><h2>Stake NEAR for rNEAR</h2></div></div>
+        <p className="flywheel-note">Rhea’s live rNEAR contract stakes NEAR and returns rNEAR to your wallet. This is native liquid staking—not an rNEAR/USDC pool. The displayed pool market is rNEAR/wNEAR.</p>
+        {accountId?<>
+          <label className="field">NEAR amount<input inputMode="decimal" value={stakeAmount} onChange={event=>setStakeAmount(event.target.value)} placeholder="Amount to stake" aria-label="NEAR amount to stake"/></label>
+          <p className="flywheel-note">{nativeBalance===null?"Your wallet balance is unavailable; staking is paused until it can be checked.":`Connected balance: ${nativeBalance} NEAR. Leave extra NEAR for transaction fees${" and one-time token registration if required."}`}</p>
+          {stakeExceedsBalance&&<p className="flywheel-note">That amount is higher than the available NEAR balance.</p>}
+          <button className="primary-button" onClick={()=>onStake(stakeAmount)} disabled={busy||!stakeAmountValid||stakeExceedsBalance||nativeBalance===null}>{busy?<span className="loader small"/>:"Review stake in wallet"}</button>
+        </>:<button className="secondary-button" onClick={onConnect} disabled={busy}>Connect NEAR wallet to stake</button>}
+        <p className="flywheel-note">Your wallet signs and submits the transaction. Rhea’s official SDK adds a one-time token-registration call when needed. rNEAR output follows Rhea’s live exchange rate; it is not guaranteed to be 1:1.</p>
       </section>
 
       <section className="flywheel-card">

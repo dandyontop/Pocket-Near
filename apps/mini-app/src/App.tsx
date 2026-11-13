@@ -5,7 +5,7 @@ import { canonicalPolicy } from "@pocket-near/shared";
 import { api, ApiRequestError } from "./lib/api.js";
 import { CreatePasswordCard, UnlockModal } from "./components/SecurityDialogs.js";
 import { PublicLanding } from "./components/PublicLanding.js";
-import { connectWallet, disconnectWallet, executeIntentDeposit, executeRheaSwap, getConnector, registerRheaRoute, restoreWallet, signPolicy, type WalletAccount } from "./lib/wallet.js";
+import { connectWallet, disconnectWallet, executeIntentDeposit, executeRheaSwap, executeRNearStake, getConnector, registerRheaRoute, restoreWallet, signPolicy, type WalletAccount } from "./lib/wallet.js";
 
 const ThesisFeature=lazy(()=>import("./components/ThesisFeature.js"));
 const FlywheelScreen=lazy(()=>import("./components/FlywheelScreen.js").then(module=>({default:module.FlywheelScreen})));
@@ -289,6 +289,21 @@ export default function App(){
       await refreshPositions();
     }catch(e){const message=e instanceof Error?e.message:"Wallet did not submit the swap.";setExecutionStatus({kind:"error",message});setError(message);}finally{setBusy(false);}
   };
+  const submitRNearStake=async(amount:string)=>{
+    if(!account){setError("Connect your NEAR wallet before staking.");return;}
+    setBusy(true);setError("");
+    try{
+      const result=await executeRNearStake({accountId:account.accountId,nearAmount:amount});
+      const hash=nearTransactionHash(result);
+      const value=result&&typeof result==="object"?result as Record<string,unknown>:{};
+      const status=value.status&&typeof value.status==="object"?value.status as Record<string,unknown>:{};
+      if("Failure" in status)throw new Error("The wallet transaction failed. Check its details before trying again.");
+      setNotice(hash?`Rhea stake submitted · ${hash.slice(0,12)}…`:"Your wallet returned from the staking request. Check the transaction status before treating it as complete.");
+      await refreshPositions();
+      window.setTimeout(()=>void refreshPositions(),5_000);
+    }catch(e){setError(e instanceof Error?e.message:"The NEAR stake was not submitted.");}
+    finally{setBusy(false);}
+  };
   const registerRheaQuote=async()=>{
     if(!account||!quote||quote.provider!=="rhea")return;
     const registration=quote.raw.registration as {missing?:string[];missingStorage?:Array<{token:string;accountId:string}>}|undefined;
@@ -394,7 +409,7 @@ export default function App(){
     <main className="content">
       {error&&<div className="alert error"><ShieldAlert size={17}/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss"><X size={15}/></button></div>}
       {notice&&<div className="alert success"><Check size={17}/><span>{notice}</span><button onClick={()=>setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
-      {tab==="Flywheel"&&<Suspense fallback={<div className="empty-activity">Loading Flywheel…</div>}><FlywheelScreen/></Suspense>}
+      {tab==="Flywheel"&&<Suspense fallback={<div className="empty-activity">Loading Flywheel…</div>}><FlywheelScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} busy={busy} onConnect={()=>void connect()} onStake={amount=>void submitRNearStake(amount)}/></Suspense>}
       {tab==="Watch"&&<Suspense fallback={<div className="empty-activity">Loading Watch…</div>}><WatchScreen assets={assets} policy={policy} policyActive={policyActive} agentOn={agentOn} prices={prices} loading={watchLoading} onRefresh={()=>void loadPrices()} onSwap={swapPair} onCreatePolicy={()=>setTab("You")} memeBoard={memeBoard} memeBoardError={memeBoardError} onVoteMeme={(assetId,vote)=>void voteMeme(assetId,vote)} watchlist={watchlist} onToggleWatch={symbol=>void toggleWatch(symbol)} onTradePrice={tradePrice} alerts={alerts} alertSymbol={alertSymbol} setAlertSymbol={setAlertSymbol} alertOp={alertOp} setAlertOp={setAlertOp} alertValue={alertValue} setAlertValue={setAlertValue} onCreateAlert={()=>void createPriceAlert()} onRemoveAlert={id=>void removePriceAlert(id)} onSetAlertActive={(id,active)=>void setPriceAlertActive(id,active)}/></Suspense>}
       {tab==="Explore"&&<Suspense fallback={<div className="empty-activity">Loading Discover…</div>}><DiscoverSections onOpenExternal={openExternal} onDiscover={(type,id,url)=>void openDiscover(type,id,url)} apps={apps} earn={earn} games={games} exploreLoading={discoverLoading} exploreError={discoverError} onRefreshExplore={()=>void loadDiscover()}/></Suspense>}
       {tab==="Swap"&&<>

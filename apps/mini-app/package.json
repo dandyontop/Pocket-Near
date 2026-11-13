@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@rhea-finance/rnear-sdk": "^0.1.1",
     "@hot-labs/near-connect": "^0.12.0",
     "@telegram-apps/sdk-react": "^3.3.9",
     "lucide-react": "^0.468.0",

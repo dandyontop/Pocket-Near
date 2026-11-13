@@ -1,4 +1,5 @@
 import { NearConnector, type ConnectorAction } from "@hot-labs/near-connect";
+import { RNearClient } from "@rhea-finance/rnear-sdk";
 
 export interface WalletAccount { accountId:string; publicKey?:string; signedMessage?:SignedMessage }
 export interface SignedMessage { accountId:string; publicKey:string; signature:string; }
@@ -6,6 +7,7 @@ type Wallet = { signMessage:(args:{message:string;recipient:string;nonce:Uint8Ar
 let connector:NearConnector|undefined;
 let activeWallet:Wallet|undefined;
 let activeAccountId:string|undefined;
+const rNearClient=new RNearClient({network:"mainnet"});
 export function getConnector(){return connector??=(new NearConnector({features:{signMessage:true,testnet:false}}));}
 export async function restoreWallet():Promise<WalletAccount|null>{
   try{
@@ -47,6 +49,18 @@ export async function executeRheaSwap(input:{accountId:string;tokenIn:string;amo
   if(!activeWallet?.signAndSendTransaction)throw new Error("The connected wallet does not support transaction signing. Reconnect with a NEAR wallet that supports function calls.");
   if(!/^[a-z0-9._-]+$/.test(input.tokenIn)||!/^[1-9]\d*$/.test(input.amount)||!input.msg||!input.signature)throw new Error("Rhea route data is incomplete or invalid. Request a fresh quote.");
   return activeWallet.signAndSendTransaction({receiverId:input.tokenIn,actions:[{type:"FunctionCall",params:{methodName:"ft_transfer_call",args:{receiver_id:"aggregatedex.near",amount:input.amount,msg:JSON.stringify({msg:input.msg,signature:input.signature})},gas:"300000000000000",deposit:"1"}}]});
+}
+export async function executeRNearStake(input:{accountId:string;nearAmount:string}):Promise<unknown>{
+  if(!activeWallet?.signAndSendTransaction||activeAccountId!==input.accountId)throw new Error("Reconnect the wallet account you want to stake from.");
+  if(!/^(?:0|[1-9]\d*)(?:\.\d{1,24})?$/.test(input.nearAmount))throw new Error("Enter a NEAR amount with at most 24 decimal places.");
+  const [whole="0",fraction=""]=input.nearAmount.split(".");
+  if(BigInt(whole)*10n**24n+BigInt(fraction.padEnd(24,"0")||"0")<=0n)throw new Error("Stake amount must be greater than zero.");
+  const transaction=await rNearClient.buildStakeTransaction({accountId:input.accountId,nearAmount:input.nearAmount});
+  const actions:ConnectorAction[]=transaction.actions.map(action=>{
+    if(action.type!=="FunctionCall")throw new Error("Rhea returned an unsupported staking action.");
+    return {type:"FunctionCall",params:action.params};
+  });
+  return activeWallet.signAndSendTransaction({receiverId:transaction.receiverId,actions});
 }
 export async function executeIntentDeposit(input:{accountId:string;originChain:string;tokenContract:string|null;amount:string;depositAddress:string;memo?:string}):Promise<unknown>{
   if(!activeWallet?.signAndSendTransaction||activeAccountId!==input.accountId)throw new Error("Reconnect the wallet account used for this quote before depositing.");
