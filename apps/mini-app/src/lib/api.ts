@@ -1,4 +1,4 @@
-import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview, ThesisReport } from "@pocket-near/shared";
+import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview, FlywheelOverview, ThesisReport } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 export class ApiRequestError extends Error {
@@ -47,6 +47,7 @@ export const api={
   positions:()=>request<{positions:Array<{id:string;tokenId:string;symbol:string;amount:string;decimals:number;valueUsd:number|null;kind:"deposit"|"rnear_staked"|"rnear_balance"|"rnear_pending";nearEquivalent:string|null;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null}>;source:string;height:number|null;coverage:string;rnear?:{apyPct:number|null;ftPrice:number|null;stakedNear:string;pendingNear:string;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null;source:string;observedAt:string}}>("/api/positions"),
   prices:()=>request<{rows:PriceRow[];source:string;updatedAt:string}>("/api/prices"),
   networkOverview:()=>request<NetworkOverview>("/api/network/overview"),
+  flywheelOverview:()=>request<FlywheelOverview>("/api/flywheel/overview"),
   thesis:()=>request<ThesisReport>("/api/thesis",{method:"POST",body:JSON.stringify({})}),
   watchlist:()=>request<{symbols:string[]}>("/api/prices/watchlist"),
   saveWatchlist:(symbols:string[])=>request<{symbols:string[]}>("/api/prices/watchlist",{method:"PUT",body:JSON.stringify({symbols})}),

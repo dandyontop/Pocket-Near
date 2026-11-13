@@ -21,6 +21,7 @@ import { runScheduledWorker } from "./scheduledWorker.js";
 import { checkRheaRouteRegistration, getRheaFrozenTokenSet, getRheaMarkets, getRheaSwapQuote } from "./rheaMarkets.js";
 import { getNearStablePools } from "./investmentPools.js";
 import { createThesis, ThesisRateLimitError } from "./thesis.js";
+import { getFlywheelOverview, FlywheelOverviewError } from "./flywheel.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -123,6 +124,16 @@ app.get("/api/network/overview",asyncRoute(async(_req,res)=>{
     res.json(data);
   }catch(error){
     if(error instanceof NetworkOverviewError)return fail(res,error.status,error.message);
+    throw error;
+  }
+}));
+app.get("/api/flywheel/overview",asyncRoute(async(_req,res)=>{
+  try{
+    const data=await getFlywheelOverview();
+    res.setHeader("Cache-Control","public, max-age=300");
+    res.json(data);
+  }catch(error){
+    if(error instanceof FlywheelOverviewError)return fail(res,error.status,error.message);
     throw error;
   }
 }));

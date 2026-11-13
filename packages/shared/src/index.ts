@@ -130,6 +130,66 @@ export const networkOverviewSchema=z.object({
 });
 export type NetworkOverview=z.infer<typeof networkOverviewSchema>;
 
+export const flywheelPairSchema=z.object({
+  pair:z.string(),
+  originAsset:z.string(),
+  destinationAsset:z.string(),
+  volumeUsd:z.number().nonnegative().finite(),
+  txCount:z.number().int().nonnegative(),
+  successTxCount:z.number().int().nonnegative(),
+});
+export const flywheelSourceChainSchema=z.object({
+  sourceChain:z.string(),
+  volumeUsd:z.number().nonnegative().finite(),
+  txCount:z.number().int().nonnegative(),
+  successTxCount:z.number().int().nonnegative(),
+});
+export const flywheelPeerSchema=z.object({
+  id:z.string(),
+  name:z.string(),
+  feesUsd24h:z.number().nonnegative().finite(),
+  volumeUsd24h:z.number().nonnegative().finite(),
+  feesPerMillionUsd:z.number().nonnegative().finite(),
+  source:z.literal("defillama"),
+  note:z.string(),
+});
+export const flywheelOverviewSchema=z.object({
+  windowStart:z.string().datetime(),
+  windowEnd:z.string().datetime(),
+  updatedAt:z.string().datetime(),
+  source:z.literal("near-intents-explorer"),
+  partial:z.boolean(),
+  network:z.object({
+    volumeUsd24h:z.number().nonnegative().finite(),
+    txCount24h:z.number().int().nonnegative(),
+    successRate24h:z.number().min(0).max(1).finite(),
+  }),
+  pocketNear:z.object({
+    volumeUsd24h:z.number().nonnegative().finite(),
+    successfulTxCount24h:z.number().int().nonnegative(),
+    matchedTxCount24h:z.number().int().nonnegative(),
+    successRate24h:z.number().min(0).max(1).finite(),
+    statusCounts24h:z.record(z.number().int().nonnegative()),
+    byPair:z.array(flywheelPairSchema),
+    bySourceChain:z.array(flywheelSourceChainSchema),
+    funnel:z.object({
+      started24h:z.number().int().nonnegative(),
+      depositHashSubmitted24h:z.number().int().nonnegative(),
+      successful24h:z.number().int().nonnegative(),
+      statusCounts24h:z.record(z.number().int().nonnegative()),
+    }),
+    signals:z.object({
+      repeatedSizeBurstTxCount24h:z.number().int().nonnegative(),
+      repeatedSizeBurstVolumeUsd24h:z.number().nonnegative().finite(),
+      methodology:z.string(),
+    }),
+  }),
+  defiLlamaPeers:z.array(flywheelPeerSchema),
+  peersMethodology:z.string(),
+  methodology:z.string(),
+});
+export type FlywheelOverview=z.infer<typeof flywheelOverviewSchema>;
+
 export const thesisFactsSchema=z.object({
   capturedAt:z.string().datetime(),
   market:z.object({

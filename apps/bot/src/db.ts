@@ -76,6 +76,11 @@ export function migrate(): Promise<void> {
       user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       window_started_at TIMESTAMPTZ NOT NULL, request_count INTEGER NOT NULL CHECK(request_count>=0)
     );
+    CREATE TABLE IF NOT EXISTS flywheel_hourly_snapshots (
+      snapshot_hour TIMESTAMPTZ PRIMARY KEY, window_start TIMESTAMPTZ NOT NULL,
+      window_end TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,
+      partial BOOLEAN NOT NULL, aggregate JSONB NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS execution_events (
       id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       event_type TEXT NOT NULL CHECK (event_type IN ('blocked','preview','submitted','success','failed')),
@@ -166,6 +171,7 @@ export function migrate(): Promise<void> {
     ALTER TABLE intent_swaps ENABLE ROW LEVEL SECURITY;
     ALTER TABLE thesis_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE thesis_rate_limits ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE flywheel_hourly_snapshots ENABLE ROW LEVEL SECURITY;
     ALTER TABLE execution_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_watchlist ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;

@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { ArrowRight, Bot, Heart, Pause, Play, RefreshCw, Search, Shield, Trash2, TrendingUp, Wallet } from "lucide-react";
 import type { AgentPolicy, Asset, MemeBoard, MemeVote, PriceRow } from "@pocket-near/shared";
-import { NetworkOverviewCard } from "./NetworkOverviewCard.js";
 
-type HomeScreenProps = {
+type HomeShortcutsProps = {
   accountId: string | null;
   nativeBalance: string | null;
   balanceError: string;
@@ -16,11 +15,8 @@ type HomeScreenProps = {
   onNavigate: (tab: "Watch" | "Swap" | "You") => void;
 };
 
-export function HomeScreen({accountId,nativeBalance,balanceError,policy,policyActive,agentOn,busy,onConnect,onDisconnect,onNavigate}:HomeScreenProps){
-  return <section className="page-title workspace-home">
-    <p className="eyebrow">POCKET NEAR</p>
-    <h1>{accountId ? "Your pocket at a glance." : "A safer way to move."}</h1>
-    <p>Policy-bounded NEAR Intents, with every settlement kept in your wallet's control.</p>
+export function HomeShortcuts({accountId,nativeBalance,balanceError,policy,policyActive,agentOn,busy,onConnect,onDisconnect,onNavigate}:HomeShortcutsProps){
+  return <>
     <article className="home-portfolio">
       <div className="home-portfolio-head"><span>PORTFOLIO PEEK</span><Wallet size={18}/></div>
       <strong>{accountId ? nativeBalance !== null ? `${nativeBalance} NEAR` : balanceError || "Loading NEAR balance…" : "Connect a NEAR wallet"}</strong>
@@ -31,9 +27,8 @@ export function HomeScreen({accountId,nativeBalance,balanceError,policy,policyAc
       <button className="home-quick-card" onClick={()=>onNavigate("You")}><span className="discover-icon"><Bot size={17}/></span><strong>My Agent</strong><small>{policy?.freeze?"Frozen":agentOn?"Notify only":"Off"}</small></button>
       <button className="home-quick-card" onClick={()=>onNavigate("Watch")}><span className="discover-icon"><Shield size={17}/></span><strong>Policy pairs</strong><small>{policy&&policyActive?`${policy.allowedPairs.length} signed pair${policy.allowedPairs.length===1?"":"s"}`:"No active signed policy"}</small></button>
     </div>
-    <NetworkOverviewCard/>
     <button className="primary-button" onClick={()=>onNavigate(policy?"Watch":"You")}>{policy?"Review your watch pairs":"Create and sign a policy"} <ArrowRight size={15}/></button>
-  </section>;
+  </>;
 }
 
 type WatchScreenProps = {

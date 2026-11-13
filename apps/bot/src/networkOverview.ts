@@ -7,7 +7,7 @@ const MAX_PAGES=2;
 const CACHE_TTL_MS=10*60*1000;
 const REQUEST_INTERVAL_MS=5000;
 const METHOD="Rolling 24h sum of amountInUsd from Explorer transactions; successRate = SUCCESS/txCount (0–1)";
-type ExplorerTransaction={
+export type ExplorerTransaction={
   originAsset?:unknown;
   destinationAsset?:unknown;
   status?:unknown;
@@ -17,10 +17,18 @@ type ExplorerTransaction={
   depositAddress?:unknown;
   depositMemo?:unknown;
 };
+export type ExplorerWindow={
+  transactions:ExplorerTransaction[];
+  windowStart:number;
+  windowEnd:number;
+  updatedAt:string;
+  partial:boolean;
+};
 type CachedOverview={value:NetworkOverview;expiresAt:number};
 
 let cache:CachedOverview|undefined;
 let refresh:Promise<NetworkOverview>|undefined;
+let explorerRefresh:Promise<ExplorerWindow>|undefined;
 let nextExplorerRequestAt=0;
 
 export class NetworkOverviewError extends Error {
@@ -29,7 +37,7 @@ export class NetworkOverviewError extends Error {
 
 function sleep(ms:number):Promise<void>{return new Promise(resolve=>setTimeout(resolve,ms));}
 
-function transactionTimestamp(transaction:ExplorerTransaction):number|undefined{
+export function transactionTimestamp(transaction:ExplorerTransaction):number|undefined{
   if(typeof transaction.createdAtTimestamp==="number"&&Number.isFinite(transaction.createdAtTimestamp)){
     const timestamp=transaction.createdAtTimestamp*1000;
     if(Number.isFinite(timestamp))return timestamp;
@@ -41,7 +49,7 @@ function transactionTimestamp(transaction:ExplorerTransaction):number|undefined{
   return undefined;
 }
 
-function parseUsd(value:unknown):number|undefined{
+export function parseExplorerUsd(value:unknown):number|undefined{
   if(typeof value!=="string"&&typeof value!=="number")return undefined;
   if(typeof value==="string"&&!value.trim())return undefined;
   if(typeof value==="string"&&!/^\d+(?:\.\d+)?$/.test(value.trim()))return undefined;
@@ -78,7 +86,7 @@ function buildOverview(transactions:ExplorerTransaction[],windowStart:number,win
     const status=typeof transaction.status==="string"?transaction.status.toUpperCase():"";
     const bucket=status==="SUCCESS"||status==="PROCESSING"||status==="REFUNDED"?status:"OTHER";
     statusCounts24h[bucket]=(statusCounts24h[bucket]??0)+1;
-    const amount=parseUsd(transaction.amountInUsd);
+    const amount=parseExplorerUsd(transaction.amountInUsd);
     if(amount!==undefined&&Number.isFinite(volumeUsd24h+amount))volumeUsd24h+=amount;
 
     if(typeof transaction.originAsset!=="string"||!transaction.originAsset||typeof transaction.destinationAsset!=="string"||!transaction.destinationAsset)continue;
@@ -153,7 +161,7 @@ async function fetchPage(start:number,end:number,cursor?:{address:string;memo:st
   return payload as ExplorerTransaction[];
 }
 
-async function computeOverview():Promise<NetworkOverview>{
+async function fetchExplorerWindow():Promise<ExplorerWindow>{
   if(!env.EXPLORER_JWT.trim())throw new NetworkOverviewError("Intents network metrics are not configured. Set EXPLORER_JWT on the API server.",503);
   const windowEnd=Date.now();
   const windowStart=windowEnd-24*60*60*1000;
@@ -177,14 +185,31 @@ async function computeOverview():Promise<NetworkOverview>{
     const memo=typeof last.depositMemo==="string"?last.depositMemo:"";
     cursor={address:last.depositAddress,memo};
   }
-  const overview=buildOverview(transactions,windowStart,windowEnd,updatedAt,partial);
-  cache={value:overview,expiresAt:Date.now()+CACHE_TTL_MS};
-  return overview;
+  if(transactions.some(transaction=>transactionTimestamp(transaction)===undefined))partial=true;
+  return {transactions,windowStart,windowEnd,updatedAt,partial};
+}
+
+export async function getExplorerWindow():Promise<ExplorerWindow>{
+  if(explorerRefresh)return explorerRefresh;
+  explorerRefresh=fetchExplorerWindow();
+  try{return await explorerRefresh;}finally{explorerRefresh=undefined;}
+}
+
+function computeOverview(window:ExplorerWindow):NetworkOverview{
+  return buildOverview(window.transactions,window.windowStart,window.windowEnd,window.updatedAt,window.partial);
+}
+
+export function aggregateExplorerWindow(window:ExplorerWindow):NetworkOverview{
+  return computeOverview(window);
 }
 
 export async function getNetworkOverview():Promise<NetworkOverview>{
   if(cache&&cache.expiresAt>Date.now())return cache.value;
   if(refresh)return refresh;
-  refresh=computeOverview();
+  refresh=getExplorerWindow().then(window=>{
+    const overview=computeOverview(window);
+    cache={value:overview,expiresAt:Date.now()+CACHE_TTL_MS};
+    return overview;
+  });
   try{return await refresh;}finally{refresh=undefined;}
 }
