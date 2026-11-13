@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, Bot, Heart, Pause, Play, RefreshCw, Search, Shield, Trash2, TrendingUp, Wallet } from "lucide-react";
-import type { AgentPolicy, Asset, MemeBoard, MemeVote, PriceRow } from "@pocket-near/shared";
+import type { AgentPolicy, Asset, MarketSentiment, MemeBoard, MemeVote, PriceRow } from "@pocket-near/shared";
+import { api } from "../lib/api.js";
+import ThesisFeature from "./ThesisFeature.js";
+import { getRheaMarketRiskFlags } from "../lib/rheaRisk.js";
 
 type HomeShortcutsProps = {
   accountId: string | null;
@@ -12,7 +15,7 @@ type HomeShortcutsProps = {
   busy:boolean;
   onConnect: () => void;
   onDisconnect: () => void;
-  onNavigate: (tab: "Watch" | "Swap" | "You") => void;
+  onNavigate: (tab: "MarketPlace" | "Swap" | "You") => void;
 };
 
 export function HomeShortcuts({accountId,nativeBalance,balanceError,policy,policyActive,agentOn,busy,onConnect,onDisconnect,onNavigate}:HomeShortcutsProps){
@@ -25,13 +28,16 @@ export function HomeShortcuts({accountId,nativeBalance,balanceError,policy,polic
     </article>
     <div className="home-quick-grid">
       <button className="home-quick-card" onClick={()=>onNavigate("You")}><span className="discover-icon"><Bot size={17}/></span><strong>My Agent</strong><small>{policy?.freeze?"Frozen":agentOn?"Notify only":"Off"}</small></button>
-      <button className="home-quick-card" onClick={()=>onNavigate("Watch")}><span className="discover-icon"><Shield size={17}/></span><strong>Policy pairs</strong><small>{policy&&policyActive?`${policy.allowedPairs.length} signed pair${policy.allowedPairs.length===1?"":"s"}`:"No active signed policy"}</small></button>
+      <button className="home-quick-card" onClick={()=>onNavigate("MarketPlace")}><span className="discover-icon"><Shield size={17}/></span><strong>Policy pairs</strong><small>{policy&&policyActive?`${policy.allowedPairs.length} signed pair${policy.allowedPairs.length===1?"":"s"}`:"No active signed policy"}</small></button>
     </div>
-    <button className="primary-button" onClick={()=>onNavigate(policy?"Watch":"You")}>{policy?"Review your watch pairs":"Create and sign a policy"} <ArrowRight size={15}/></button>
+    <button className="primary-button" onClick={()=>onNavigate(policy?"MarketPlace":"You")}>{policy?"Review your watch pairs":"Create and sign a policy"} <ArrowRight size={15}/></button>
   </>;
 }
 
-type WatchScreenProps = {
+type MarketPlaceScreenProps = {
+  accountId:string|null;
+  nativeBalance:string|null;
+  nearPrice:number|null;
   assets: Asset[];
   policy: AgentPolicy | null;
   policyActive: boolean;
@@ -62,9 +68,27 @@ type WatchScreenProps = {
 const usd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumSignificantDigits:6}).format(value);
 const compactUsd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:2}).format(value);
 
-export function WatchScreen({assets,policy,policyActive,agentOn,prices,loading,onRefresh,onSwap,onCreatePolicy,memeBoard,memeBoardError,onVoteMeme,watchlist,onToggleWatch,onTradePrice,alerts,alertSymbol,setAlertSymbol,alertOp,setAlertOp,alertValue,setAlertValue,onCreateAlert,onRemoveAlert,onSetAlertActive}:WatchScreenProps){
+function FearGreedMeter(){
+  const [sentiment,setSentiment]=useState<MarketSentiment|null>(null);
+  const [error,setError]=useState("");
+  const [loading,setLoading]=useState(false);
+  const refresh=async()=>{
+    setLoading(true);setError("");
+    try{setSentiment(await api.marketSentiment());}
+    catch(e){setError(e instanceof Error?e.message:"The sentiment index is unavailable.");}
+    finally{setLoading(false);}
+  };
+  useEffect(()=>{void refresh();},[]);
+  return <article className="sentiment-card">
+    <div className="section-heading compact"><div><p className="eyebrow">MARKET SENTIMENT</p><h2>Fear &amp; Greed</h2></div><button className="icon-button light" aria-label="Refresh market sentiment" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={15}/></button></div>
+    {sentiment?<><div className="sentiment-value"><strong>{sentiment.value}</strong><span>/ 100</span></div><div className="sentiment-track" role="meter" aria-label="Fear and Greed index score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={sentiment.value}><span style={{width:`${sentiment.value}%`}}/></div><small>Index observation: {new Date(sentiment.observedAt).toLocaleString()}</small><small>Last checked: {new Date(sentiment.updatedAt).toLocaleString()}</small><small>Source: Alternative.me · broad crypto-market index, not a NEAR-specific reading.</small>{error&&<div className="execution-status error"><span>Could not refresh; showing the previous reading. {error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>}</>:error?<div className="execution-status error"><span>{error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>:<div className="empty-activity"><span className="loader"/><span>Loading latest index…</span></div>}
+  </article>;
+}
+
+export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,policy,policyActive,agentOn,prices,loading,onRefresh,onSwap,onCreatePolicy,memeBoard,memeBoardError,onVoteMeme,watchlist,onToggleWatch,onTradePrice,alerts,alertSymbol,setAlertSymbol,alertOp,setAlertOp,alertValue,setAlertValue,onCreateAlert,onRemoveAlert,onSetAlertActive}:MarketPlaceScreenProps){
   const [section,setSection]=useState<"prices"|"memes">("prices");
   const [priceSearch,setPriceSearch]=useState("");
+  const [hideRiskFlagged,setHideRiskFlagged]=useState(false);
   const assetById=new Map(assets.map(asset=>[asset.assetId,asset]));
   const activePairs=policy&&policyActive&&!policy.freeze?policy.allowedPairs:[];
   const findPrice=(asset:Asset|undefined)=>{
@@ -75,8 +99,10 @@ export function WatchScreen({assets,policy,policyActive,agentOn,prices,loading,o
     return symbol==="WNEAR"?prices.find(price=>price.symbol.toUpperCase()==="NEAR"):undefined;
   };
   return <section className="page-title">
-    <div className="watch-heading"><div><p className="eyebrow">SIGNED POLICY ONLY</p><h1>Watch</h1></div><button className="icon-button light" aria-label="Refresh watch prices" onClick={onRefresh} disabled={loading}><RefreshCw size={15}/></button></div>
-    <p>Live price context for pairs in your signed policy. Rhea markets show indexed NEAR token activity and community sentiment.</p>
+    <div className="watch-heading"><div><p className="eyebrow">NEAR MARKETPLACE</p><h1>MarketPlace</h1></div><button className="icon-button light" aria-label="Refresh marketplace data" onClick={onRefresh} disabled={loading}><RefreshCw size={15}/></button></div>
+    <p>Live prices, policy pairs, Rhea markets and sourced market research.</p>
+    <FearGreedMeter/>
+    <ThesisFeature accountId={accountId} nativeBalance={nativeBalance} nearPrice={nearPrice}/>
     <div className={`policy-status ${!policy||!policyActive||policy.freeze?"blocked":"ok"}`}>{!policy?"No policy":policy.freeze?"Frozen":!policyActive?"No active policy":"Policy active"}{policy&&` · ${agentOn?"Agent monitoring":"Agent paused"}`}</div>
     {!policy?<article className="coming-soon-card"><strong>Create a signed policy to start watching</strong><span>Watch lists only pairs you explicitly authorize in your policy.</span><button className="secondary-button" onClick={onCreatePolicy}>Set up policy <ArrowRight size={14}/></button></article>:policy.freeze?<article className="coming-soon-card"><strong>Your policy is frozen</strong><span>Unfreeze it in You before resuming pair monitoring.</span><button className="secondary-button" onClick={onCreatePolicy}>Review policy <ArrowRight size={14}/></button></article>:!policyActive?<article className="coming-soon-card"><strong>No active signed policy</strong><span>Sign an active policy in You to resume policy-pair monitoring.</span><button className="secondary-button" onClick={onCreatePolicy}>Review policy <ArrowRight size={14}/></button></article>:activePairs.length===0?<article className="coming-soon-card"><strong>No policy pairs</strong><span>Add and sign an allowed pair to see its price context.</span><button className="secondary-button" onClick={onCreatePolicy}>Add a pair <ArrowRight size={14}/></button></article>:<div className="watch-pair-list">{activePairs.map((pair,index)=>{
       const from=assetById.get(pair.from),to=assetById.get(pair.to);
@@ -102,7 +128,12 @@ export function WatchScreen({assets,policy,policyActive,agentOn,prices,loading,o
       </section>}
       {section==="memes"&&<section className="watch-market-section">
         <div className="section-heading compact"><div><p className="eyebrow">RHEA DEX · NEAR</p><h2>NEAR token markets</h2></div></div>
-        {memeBoard.status==="coming_soon"||memeBoard.assets.length===0?<article className="coming-soon-card">{memeBoardError?"Rhea markets unavailable":"No indexed Rhea markets"}<span>{memeBoardError||"No active pools were returned by the market data source. No placeholder markets or votes are shown."}</span></article>:<div className="meme-list">{memeBoard.assets.map(asset=><article className="meme-row" key={asset.assetId}><div className="market-name"><strong>{asset.name||asset.symbol}</strong><span>Contract {asset.assetId.replace(/^near:/,"")} · {asset.symbol} · {asset.poolName||asset.blockchain} · TVL {asset.liquidityUsd===null||asset.liquidityUsd===undefined?"—":compactUsd(asset.liquidityUsd)} · 24h volume {asset.volume24hUsd===null||asset.volume24hUsd===undefined?"—":compactUsd(asset.volume24hUsd)} · trades {asset.trades24h??"—"} · price {asset.priceUsd===null||asset.priceUsd===undefined?"—":usd(asset.priceUsd)} · 24h {asset.priceChange24hPct===null||asset.priceChange24hPct===undefined?"—":`${asset.priceChange24hPct>=0?"+":""}${asset.priceChange24hPct.toFixed(2)}%`} · {asset.poolType||"Rhea pool"} · fee {asset.poolFeePct===null||asset.poolFeePct===undefined?"—":`${asset.poolFeePct.toFixed(2)}%`} · {asset.frozen===true?"FROZEN":asset.frozen===false?"not frozen":"freeze status unavailable"}</span></div><div className="meme-votes"><button className={asset.userVote==="bull"?"active":""} onClick={()=>onVoteMeme(asset.assetId,"bull")} aria-label={`Vote bullish for ${asset.symbol}`}>Bull {asset.bullVotes}</button><button className={asset.userVote==="bear"?"active":""} onClick={()=>onVoteMeme(asset.assetId,"bear")} aria-label={`Vote bearish for ${asset.symbol}`}>Bear {asset.bearVotes}</button></div><a className="mini-trade" href={asset.poolUrl} target="_blank" rel="noreferrer">Pool</a><button className="mini-trade" onClick={()=>{const near=assets.find(candidate=>candidate.blockchain.toLowerCase()==="near"&&candidate.symbol.toUpperCase().includes("NEAR"));if(near)onSwap(asset.assetId,near.assetId);}}>Check route</button></article>)}</div>}
+        <label className="risk-filter"><input type="checkbox" checked={hideRiskFlagged} onChange={event=>setHideRiskFlagged(event.target.checked)}/>Hide markets with reported risk signals</label>
+        {memeBoard.status==="coming_soon"||memeBoard.assets.length===0?<article className="coming-soon-card">{memeBoardError?"Rhea markets unavailable":"No indexed Rhea markets"}<span>{memeBoardError||"No active pools were returned by the market data source. No placeholder markets or votes are shown."}</span></article>:<div className="meme-list">{memeBoard.assets.filter(asset=>!hideRiskFlagged||getRheaMarketRiskFlags(asset).length===0).map(asset=>{
+          const flags=getRheaMarketRiskFlags(asset);
+          return <article className="meme-row" key={asset.assetId}><div className="market-name"><strong>{asset.name||asset.symbol}</strong><span>Contract {asset.assetId.replace(/^near:/,"")} · {asset.symbol} · {asset.poolName||asset.blockchain} · TVL {asset.liquidityUsd===null||asset.liquidityUsd===undefined?"—":compactUsd(asset.liquidityUsd)} · 24h volume {asset.volume24hUsd===null||asset.volume24hUsd===undefined?"—":compactUsd(asset.volume24hUsd)} · trades {asset.trades24h??"—"} · price {asset.priceUsd===null||asset.priceUsd===undefined?"—":usd(asset.priceUsd)} · 24h {asset.priceChange24hPct===null||asset.priceChange24hPct===undefined?"—":`${asset.priceChange24hPct>=0?"+":""}${asset.priceChange24hPct.toFixed(2)}%`} · {asset.poolType||"Rhea pool"} · fee {asset.poolFeePct===null||asset.poolFeePct===undefined?"—":`${asset.poolFeePct.toFixed(2)}%`} · {asset.frozen===true?"FROZEN":asset.frozen===false?"not frozen":"freeze status unavailable"}<span className="market-risk-flags">{flags.length?`Risk signals: ${flags.join(" ")}`:"No signal from the displayed checks; this is not an endorsement."}</span></span></div><div className="meme-votes"><button className={asset.userVote==="bull"?"active":""} onClick={()=>onVoteMeme(asset.assetId,"bull")} aria-label={`Vote bullish for ${asset.symbol}`}>Bull {asset.bullVotes}</button><button className={asset.userVote==="bear"?"active":""} onClick={()=>onVoteMeme(asset.assetId,"bear")} aria-label={`Vote bearish for ${asset.symbol}`}>Bear {asset.bearVotes}</button></div><a className="mini-trade" href={asset.poolUrl} target="_blank" rel="noreferrer">Pool</a><button className="mini-trade" onClick={()=>{const near=assets.find(candidate=>candidate.blockchain.toLowerCase()==="near"&&candidate.symbol.toUpperCase().includes("NEAR"));if(near)onSwap(asset.assetId,near.assetId);}}>Check route</button></article>;
+        })}</div>}
+        <p className="meme-disclaimer">Signals use Rhea's freeze list and reported liquidity, volume, trade count and 24-hour price change (thresholds: $10,000 liquidity, $100 volume, 3 trades, 20% move). They do not identify wash trading, bots or scams. Filtering only hides rows; it does not change policy or wallet actions.</p>
         <p className="meme-disclaimer">Community votes are social only and never affect policies, agent decisions or execution.</p>
       </section>}
     </div>

@@ -13,6 +13,7 @@ import { makePasswordHash, makeSession, makeUserSession, newNonce, readSession, 
 import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
 import { fetchLiveQuote, getExecutionStatus, getSupportedToken, QuoteProviderError, QuoteRequestError, submitDepositTx } from "./quotes.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
+import { getMarketSentiment, MarketSentimentError } from "./marketSentiment.js";
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
 import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
 import { timingSafeEqual } from "node:crypto";
@@ -132,6 +133,10 @@ app.get("/api/positions",requireSession,asyncRoute(async(req,res)=>{
 
 app.get("/api/prices",asyncRoute(async(_req,res)=>{
   const data=await getPrices();res.setHeader("Cache-Control","public, max-age=30");res.json(data);
+}));
+app.get("/api/market/sentiment",asyncRoute(async(_req,res)=>{
+  try{const data=await getMarketSentiment();res.setHeader("Cache-Control","public, max-age=300");res.json(data);}
+  catch(error){if(error instanceof MarketSentimentError)return fail(res,503,error.message);throw error;}
 }));
 app.get("/api/network/overview",asyncRoute(async(_req,res)=>{
   try{

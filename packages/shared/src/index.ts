@@ -74,6 +74,13 @@ export type PolicyDecision = { allowed: true } | { allowed: false; reason: strin
 
 export const priceRowSchema = z.object({ id:z.string(), symbol:z.string(), name:z.string(), priceUsd:z.number().nonnegative(), change24hPct:z.number().nullable(), marketCap:z.number().nonnegative().nullable(), source:z.string(), updatedAt:z.string().datetime() });
 export type PriceRow = z.infer<typeof priceRowSchema>;
+export const marketSentimentSchema=z.object({
+  value:z.number().int().min(0).max(100),
+  observedAt:z.string().datetime(),
+  updatedAt:z.string().datetime(),
+  source:z.literal("alternative.me"),
+});
+export type MarketSentiment=z.infer<typeof marketSentimentSchema>;
 export const priceAlertSchema = z.object({ id:z.number().int().positive().optional(), symbol:z.string().min(1).max(24), op:z.enum(["gte","lte"]), thresholdUsd:z.number().positive(), active:z.boolean().default(true) });
 export type PriceAlert = z.infer<typeof priceAlertSchema>;
 export const earnProtocolSchema = z.object({ id:z.string(), name:z.string(), category:z.string(), tvl:z.number().nonnegative(), change1d:z.number().nullable(), change7d:z.number().nullable(), url:z.string().url(), logo:z.string().url().optional() });
@@ -196,6 +203,19 @@ export const thesisFactsSchema=z.object({
     asset:z.literal("NEAR"),priceUsd:z.number().nonnegative().finite().nullable(),change24hPct:z.number().finite().nullable(),
     source:z.string().nullable(),updatedAt:z.string().datetime().nullable(),
   }),
+  marketAssets:z.array(z.object({
+    id:z.string(),symbol:z.string(),name:z.string(),priceUsd:z.number().nonnegative().finite(),
+    marketCap:z.number().nonnegative().finite().nullable(),change24hPct:z.number().finite().nullable(),
+    source:z.string(),updatedAt:z.string().datetime(),
+  })).max(10).default([]),
+  nearPools:z.array(z.object({
+    poolId:z.string(),kind:z.string(),symbols:z.array(z.string()),tvlUsd:z.number().nonnegative().finite(),
+    volume24hUsd:z.number().nonnegative().finite().nullable(),feeApr24hRunRatePct:z.number().nonnegative().finite().nullable(),
+    poolType:z.string().nullable(),updatedAt:z.string().datetime(),url:z.string().url(),
+  })).max(10).default([]),
+  gameDirectory:z.array(z.object({
+    id:z.string(),name:z.string(),blurb:z.string(),url:z.string().url(),tags:z.array(z.string()),
+  })).max(10).default([]),
   intents24h:z.object({
     volumeUsd24h:z.number().nonnegative().finite(),txCount24h:z.number().int().nonnegative(),
     successRate24h:z.number().min(0).max(1).finite(),windowStart:z.string().datetime(),windowEnd:z.string().datetime(),

@@ -1,4 +1,4 @@
-import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview, FlywheelOverview, ThesisReport } from "@pocket-near/shared";
+import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, MarketSentiment, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview, FlywheelOverview, ThesisReport } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 export class ApiRequestError extends Error {
@@ -46,6 +46,7 @@ export const api={
   saveInvestmentPreferences:(preferences:{alertsEnabled:boolean;symbols:string[];positionMonitoring:boolean;reportFrequency:number})=>request<{preferences:{alertsEnabled:boolean;symbols:string[];positionMonitoring:boolean;reportFrequency:number;lastSuggestionAt:string|null;nextPositionReportAt:string|null}}>("/api/investments/preferences",{method:"PUT",body:JSON.stringify(preferences)}),
   positions:()=>request<{positions:Array<{id:string;tokenId:string;symbol:string;amount:string;decimals:number;valueUsd:number|null;kind:"deposit"|"rnear_staked"|"rnear_balance"|"rnear_pending";nearEquivalent:string|null;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null}>;source:string;height:number|null;coverage:string;rnear?:{apyPct:number|null;ftPrice:number|null;stakedNear:string;pendingNear:string;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null;source:string;observedAt:string}}>("/api/positions"),
   prices:()=>request<{rows:PriceRow[];source:string;updatedAt:string}>("/api/prices"),
+  marketSentiment:()=>request<MarketSentiment>("/api/market/sentiment"),
   networkOverview:()=>request<NetworkOverview>("/api/network/overview"),
   flywheelOverview:()=>request<FlywheelOverview>("/api/flywheel/overview"),
   thesis:()=>request<ThesisReport>("/api/thesis",{method:"POST",body:JSON.stringify({})}),
