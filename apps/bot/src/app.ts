@@ -6,12 +6,12 @@ import compression from "compression";
 import cookieParser from "cookie-parser";
 import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
-import { canonicalPolicy, checkPolicy, policySchema, quoteInputSchema, type QuoteView } from "@pocket-near/shared";
+import { canonicalPolicy, checkPolicy, intentSwapSchema, intentSwapStatusSchema, policySchema, quoteInputSchema, type IntentSwap, type IntentSwapStatus, type QuoteView } from "@pocket-near/shared";
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, makeUserSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
 import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
-import { fetchLiveQuote, QuoteProviderError, QuoteRequestError } from "./quotes.js";
+import { fetchLiveQuote, getExecutionStatus, getSupportedToken, QuoteProviderError, QuoteRequestError, submitDepositTx } from "./quotes.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
 import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
@@ -46,6 +46,11 @@ function fail(res: Response, status: number, message: string): void { res.status
 function asyncRoute(fn: (req: Request,res: Response,next: NextFunction) => Promise<unknown>) { return (req: Request,res: Response,next: NextFunction) => { void fn(req,res,next).catch(next); }; }
 const cookieName = "pocket_near_session";
 function cookie(res: Response, token: string) { res.cookie(cookieName,token,{ httpOnly:true, secure:env.COOKIE_SECURE, sameSite:env.COOKIE_SECURE?"none":"lax", path:"/api", maxAge:12*60*60*1000 }); }
+
+type IntentSwapRow={id:string;quote_id:string;quote:QuoteView;origin_chain:string;origin_token_contract:string|null;deposit_address?:string;deposit_memo?:string|null;status:IntentSwapStatus;deposit_tx_hash:string|null;status_details:Record<string,unknown>|null;created_at:Date|string;updated_at:Date|string};
+function presentIntentSwap(row:IntentSwapRow):IntentSwap{
+  return intentSwapSchema.parse({id:row.id,quoteId:row.quote_id,quote:row.quote,originChain:row.origin_chain,originTokenContract:row.origin_token_contract,status:row.status,depositTxHash:row.deposit_tx_hash,statusDetails:row.status_details,createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()});
+}
 
 const requireSession = asyncRoute(async (req,res,next) => {
   try {
@@ -203,6 +208,28 @@ async function requirePassword(req: Request, supplied?: string): Promise<boolean
   const password = z.string().min(10).max(128).safeParse(supplied ?? req.get("x-pocket-password") ?? "");
   if (!row.rows[0]?.password_hash || !row.rows[0].password_salt || !password.success) return false;
   return verifyPassword(password.data,row.rows[0].password_salt,row.rows[0].password_hash);
+}
+
+type AgentRuntime={master_lock:boolean;agent_enabled:boolean;agent_mode:string};
+type QuotePolicyEvaluation={decision?:{allowed:boolean;reason?:string};error?:{status:number;message:string}};
+async function evaluateQuoteForUser(userId:number,quote:QuoteView,runtime:AgentRuntime,recordPreview:boolean):Promise<QuotePolicyEvaluation>{
+  if(runtime.master_lock)return {error:{status:423,message:"Agent is locked."}};
+  const {rows}=await pool.query<{body:unknown;active:boolean}>("SELECT body,active FROM policies WHERE user_id=$1",[userId]);
+  if(!rows[0]?.active)return {error:{status:409,message:"No active signed policy is available."}};
+  const policy=policySchema.parse(rows[0].body);
+  if(policy.freeze)return {error:{status:423,message:"Emergency freeze active."}};
+  const now=new Date();
+  const dayKey=now.toISOString().slice(0,10);
+  const weekKey=`${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
+  const usage=await pool.query<{day_amount:string;week_amount:string}>(`SELECT
+    COALESCE(sum((details->>'amountIn')::numeric) FILTER (WHERE created_at::date=now()::date),0)::text AS day_amount,
+    COALESCE(sum((details->>'amountIn')::numeric) FILTER (WHERE created_at >= date_trunc('week',now())),0)::text AS week_amount
+    FROM execution_events WHERE user_id=$1 AND event_type IN ('submitted','success')`,[userId]);
+  const decision=checkPolicy(policy,{dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey,weekKey},quote,now);
+  const details=JSON.stringify({quoteId:quote.id,amountIn:quote.amountIn,reason:decision.allowed?null:decision.reason});
+  if(decision.allowed&&recordPreview)await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[userId,details]);
+  if(!decision.allowed)await pool.query("INSERT INTO execution_events(user_id,event_type,details) SELECT $1,'blocked',$2 WHERE NOT EXISTS(SELECT 1 FROM execution_events WHERE user_id=$1 AND event_type='blocked' AND details->>'quoteId'=$3 AND created_at>now()-interval '5 minutes')",[userId,details,quote.id]);
+  return {decision};
 }
 
 app.get("/api/health",asyncRoute(async(_req,res)=>{await pool.query("SELECT 1");res.json({ok:true,database:"connected"});}));
@@ -396,6 +423,116 @@ app.post("/api/quotes",requireSession,asyncRoute(async (req,res) => {
   res.json({quote,source,autoEligible:!quote.stale && Date.parse(quote.expiresAt)>Date.now()});
 }));
 
+app.post("/api/swaps/start",requireSession,asyncRoute(async(req,res)=>{
+  const parsed=z.object({quoteId:z.string().min(1).max(180)}).safeParse(req.body);
+  if(!parsed.success)return fail(res,400,"Request a live quote before starting an Intents swap.");
+  const runtime=(await pool.query<AgentRuntime&{account_id:string|null;master_lock:boolean}>("SELECT account_id,master_lock,agent_enabled,agent_mode FROM users WHERE id=$1",[req.userId])).rows[0];
+  if(!runtime)return fail(res,401,"Wallet session expired. Connect your wallet again.");
+  if(runtime.master_lock)return fail(res,423,"Agent is locked.");
+  const existing=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE user_id=$1 AND preview_quote_id=$2",[req.userId,parsed.data.quoteId]);
+  if(existing.rowCount){res.setHeader("Cache-Control","no-store");return res.json({swap:presentIntentSwap(existing.rows[0]!),reused:true});}
+  if(!env.ONE_CLICK_JWT)return fail(res,503,"Live Intents swaps are unavailable until the server is configured with ONE_CLICK_JWT.");
+  const previewResult=await pool.query<{quote:QuoteView}>("SELECT quote FROM live_quotes WHERE user_id=$1 AND quote_id=$2",[req.userId,parsed.data.quoteId]);
+  if(!previewResult.rowCount)return fail(res,404,"Quote is unknown or belongs to another session. Request a fresh quote.");
+  const preview=previewResult.rows[0]!.quote;
+  if(preview.provider!=="one-click"||preview.stale)return fail(res,409,"Only a fresh 1-Click quote can be used to start an Intents swap.");
+  if(Date.parse(preview.expiresAt)<=Date.now())return fail(res,409,"Quote expired. Request a fresh quote before starting the swap.");
+  const inputResult=quoteInputSchema.safeParse({
+    originAsset:preview.originAsset,destinationAsset:preview.destinationAsset,
+    amount:preview.raw.requestedAmount,sender:preview.raw.sender,recipient:preview.raw.recipient,
+    refundTo:preview.raw.refundTo,slippageToleranceBps:preview.slippageBps,
+  });
+  if(!inputResult.success)return fail(res,409,"Quote details are incomplete. Request a fresh quote.");
+  const input=inputResult.data;
+  if(!runtime.account_id||input.sender!==runtime.account_id)return fail(res,403,"Quote sender must be the connected wallet.");
+  let live:Awaited<ReturnType<typeof fetchLiveQuote>>;
+  let originToken:Awaited<ReturnType<typeof getSupportedToken>>;
+  try{
+    [live,originToken]=await Promise.all([fetchLiveQuote(input,{dry:false}),getSupportedToken(input.originAsset)]);
+  }catch(error){
+    if(error instanceof QuoteRequestError||error instanceof QuoteProviderError)return fail(res,error.status,error.message);
+    throw error;
+  }
+  if(live.source!=="live"||live.quote.provider!=="one-click"||live.quote.stale||!live.quote.depositAddress)return fail(res,502,"1-Click did not return a fresh executable quote with a deposit address.");
+  if(!originToken)return fail(res,422,"The selected origin asset is no longer available from 1-Click.");
+  if(originToken.blockchain.toLowerCase()==="near"&&!originToken.contractAddress&&originToken.assetId!=="near:native")return fail(res,422,"1-Click did not provide the NEAR token contract required for a safe wallet deposit.");
+  if(originToken.blockchain.toLowerCase()==="near"&&!(/^[0-9a-f]{64}$/.test(live.quote.depositAddress)||/^[a-z0-9_-]+(?:[.-][a-z0-9_-]+)*$/.test(live.quote.depositAddress)))return fail(res,502,"1-Click returned an invalid NEAR deposit address.");
+  const evaluation=await evaluateQuoteForUser(req.userId!,live.quote,runtime,true);
+  if(evaluation.error)return fail(res,evaluation.error.status,evaluation.error.message);
+  const decision=evaluation.decision!;
+  if(!decision.allowed)return fail(res,409,decision.reason??"The quote does not satisfy the active signed policy.");
+  const id=randomUUID();
+  await pool.query(`INSERT INTO intent_swaps(id,user_id,quote_id,preview_quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING_DEPOSIT') ON CONFLICT(user_id,preview_quote_id) DO NOTHING`,
+  [id,req.userId,live.quote.id,parsed.data.quoteId,JSON.stringify(live.quote),originToken.blockchain.toLowerCase(),originToken.contractAddress??null,live.quote.depositAddress,live.quote.depositMemo??null]);
+  const saved=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE user_id=$1 AND preview_quote_id=$2",[req.userId,parsed.data.quoteId]);
+  if(!saved.rowCount)throw new Error("The executable Intents quote could not be saved.");
+  res.setHeader("Cache-Control","no-store");
+  res.json({swap:presentIntentSwap(saved.rows[0]!),reused:saved.rows[0]!.id!==id});
+}));
+
+app.get("/api/swaps",requireSession,asyncRoute(async(req,res)=>{
+  const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20",[req.userId]);
+  res.setHeader("Cache-Control","no-store");
+  res.json({swaps:result.rows.map(presentIntentSwap)});
+}));
+
+app.post("/api/swaps/:id/deposit",requireSession,asyncRoute(async(req,res)=>{
+  const id=z.string().uuid().safeParse(req.params.id);
+  const body=z.object({txHash:z.string().trim().min(1).max(512)}).safeParse(req.body);
+  if(!id.success||!body.success)return fail(res,400,"A valid swap ID and deposit transaction hash are required.");
+  const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE id=$1 AND user_id=$2",[id.data,req.userId]);
+  if(!result.rowCount)return fail(res,404,"Swap was not found for this account.");
+  const swap=result.rows[0]!;
+  if(swap.deposit_tx_hash&&swap.deposit_tx_hash!==body.data.txHash)return fail(res,409,"A different deposit transaction hash is already attached to this swap.");
+  if(swap.deposit_tx_hash&&swap.status!=="PENDING_DEPOSIT"&&swap.status!=="KNOWN_DEPOSIT_TX")return res.json({swap:presentIntentSwap(swap)});
+  if(!env.ONE_CLICK_JWT)return fail(res,503,"Deposit notification is unavailable until the server is configured with ONE_CLICK_JWT.");
+  const sender=swap.quote.raw.sender;
+  if(!swap.quote.depositAddress)return fail(res,409,"This swap has no deposit address. Request a fresh quote.");
+  const saved=await pool.query<IntentSwapRow>(`UPDATE intent_swaps SET deposit_tx_hash=$3,updated_at=now()
+    WHERE id=$1 AND user_id=$2 AND (deposit_tx_hash IS NULL OR deposit_tx_hash=$3)
+    RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at`,[id.data,req.userId,body.data.txHash]);
+  if(!saved.rowCount)return fail(res,409,"A different deposit transaction hash is already attached to this swap.");
+  try{
+    const response=await submitDepositTx({
+      txHash:body.data.txHash,depositAddress:swap.quote.depositAddress!,
+      ...(swap.origin_chain==="near"&&typeof sender==="string"?{nearSenderAccount:sender}:{}),
+      ...(swap.quote.depositMemo?{memo:swap.quote.depositMemo}:{}),
+    });
+    const status=intentSwapStatusSchema.safeParse(response.status);
+    if(!status.success)return fail(res,502,"1-Click returned an unsupported swap status.");
+    const details={updatedAt:response.updatedAt,swapDetails:response.swapDetails};
+    const updated=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status=$3,status_details=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId,status.data,JSON.stringify(details)]);
+    res.setHeader("Cache-Control","no-store");
+    res.json({swap:presentIntentSwap(updated.rows[0]!)});
+  }catch(error){
+    if(error instanceof QuoteProviderError)return fail(res,error.status,error.message);
+    throw error;
+  }
+}));
+
+app.get("/api/swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
+  const id=z.string().uuid().safeParse(req.params.id);
+  if(!id.success)return fail(res,400,"A valid swap ID is required.");
+  const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE id=$1 AND user_id=$2",[id.data,req.userId]);
+  if(!result.rowCount)return fail(res,404,"Swap was not found for this account.");
+  if(!env.ONE_CLICK_JWT)return fail(res,503,"Status refresh is unavailable until the server is configured with ONE_CLICK_JWT.");
+  const swap=result.rows[0]!;
+  if(!swap.deposit_address)return fail(res,500,"Saved swap is missing its deposit address.");
+  try{
+    const response=await getExecutionStatus(swap.deposit_address,swap.deposit_memo??undefined);
+    const status=intentSwapStatusSchema.safeParse(response.status);
+    if(!status.success)return fail(res,502,"1-Click returned an unsupported swap status.");
+    const details={updatedAt:response.updatedAt,swapDetails:response.swapDetails};
+    const updated=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status=$3,status_details=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId,status.data,JSON.stringify(details)]);
+    res.setHeader("Cache-Control","no-store");
+    res.json({swap:presentIntentSwap(updated.rows[0]!)});
+  }catch(error){
+    if(error instanceof QuoteProviderError)return fail(res,error.status,error.message);
+    throw error;
+  }
+}));
+
 app.post("/api/agent/evaluate",requireSession,asyncRoute(async (req,res) => {
   const body = z.object({quoteId:z.string().min(1).max(180),recordPreview:z.boolean().default(false),userInitiated:z.boolean().default(false)}).parse(req.body);
   const runtime=(await pool.query<{master_lock:boolean;agent_enabled:boolean;agent_mode:string}>("SELECT master_lock,agent_enabled,agent_mode FROM users WHERE id=$1",[req.userId])).rows[0]!;
@@ -403,23 +540,11 @@ app.post("/api/agent/evaluate",requireSession,asyncRoute(async (req,res) => {
   if(!body.userInitiated&&(!runtime.agent_enabled||runtime.agent_mode==="off"))return fail(res,409,"Agent monitoring is off.");
   const stored=await pool.query<{quote:QuoteView}>("SELECT quote FROM live_quotes WHERE user_id=$1 AND quote_id=$2",[req.userId,body.quoteId]);
   if(!stored.rowCount)return fail(res,404,"Quote is unknown or belongs to another session. Request a new live quote.");
-  const parsedQuote = stored.rows[0]!.quote;
-  const {rows} = await pool.query<{body:unknown,active:boolean}>("SELECT body,active FROM policies WHERE user_id=$1",[req.userId]);
-  if (!rows[0]?.active) return fail(res,409,"No active signed policy is available.");
-  const policy = policySchema.parse(rows[0].body);
-  if(policy.freeze)return fail(res,423,"Emergency freeze active.");
-  const now = new Date();
-  const dayKey = now.toISOString().slice(0,10);
-  const weekKey = `${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
-  const usage = await pool.query<{day_amount:string,week_amount:string}>(`SELECT
-    COALESCE(sum((details->>'amountIn')::numeric) FILTER (WHERE created_at::date=now()::date),0)::text AS day_amount,
-    COALESCE(sum((details->>'amountIn')::numeric) FILTER (WHERE created_at >= date_trunc('week',now())),0)::text AS week_amount
-    FROM execution_events WHERE user_id=$1 AND event_type IN ('submitted','success')`,[req.userId]);
-  const decision = checkPolicy(policy,{dayAmount:usage.rows[0]?.day_amount ?? "0",weekAmount:usage.rows[0]?.week_amount ?? "0",dayKey,weekKey},parsedQuote,now);
-  const details=JSON.stringify({quoteId:parsedQuote.id,amountIn:parsedQuote.amountIn,reason:decision.allowed?null:decision.reason});
-  if(decision.allowed&&body.recordPreview)await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,details]);
-  if(!decision.allowed)await pool.query("INSERT INTO execution_events(user_id,event_type,details) SELECT $1,'blocked',$2 WHERE NOT EXISTS(SELECT 1 FROM execution_events WHERE user_id=$1 AND event_type='blocked' AND details->>'quoteId'=$3 AND created_at>now()-interval '5 minutes')",[req.userId,details,parsedQuote.id]);
-  res.json({decision,executionMode:"wallet-confirmation-required",message:decision.allowed ? "Policy matched. A live quote can be prepared; your wallet must authorize every on-chain action." : decision.reason});
+  const parsedQuote=stored.rows[0]!.quote;
+  const result=await evaluateQuoteForUser(req.userId!,parsedQuote,runtime,body.recordPreview);
+  if(result.error)return fail(res,result.error.status,result.error.message);
+  const decision=result.decision!;
+  res.json({decision,executionMode:"wallet-confirmation-required",message:decision.allowed?"Policy matched. A live quote can be prepared; your wallet must authorize every on-chain action.":decision.reason});
 }));
 
 app.get("/api/portfolio",requireSession,asyncRoute(async (req,res) => {

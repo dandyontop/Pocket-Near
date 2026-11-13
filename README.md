@@ -6,7 +6,7 @@ Pocket Near is a non-custodial NEAR wallet companion. Its Mini App includes Home
 
 Pocket Near never asks for, receives, or stores a wallet private key. Telegram launch data is HMAC-verified, and a normal browser can establish a session only after a NEP-413 wallet signature. Both methods issue a short-lived HttpOnly session cookie. Wallet identity and policy envelopes are verified with NEP-413 signatures. Policy checks are performed by the API and are not an on-chain restriction.
 
-Every supported swap is initiated by the user and approved by the user's wallet. Rhea NEAR swaps can be submitted by the wallet. NEAR Intents 1Click quotes currently use `dry: true`; they do not deposit, submit, or settle a swap. The monitoring agent only sends notifications and never signs or submits a transaction. The database enum retains `auto_inside_policy` for compatibility, but the application disables that mode and normalizes existing users to notify-only without changing the enum.
+Every supported swap is initiated by the user and approved by the user's wallet. Rhea NEAR swaps use wallet-approved transactions. For NEAR Intents 1Click, Pocket Near requests a fresh executable quote only after the user chooses **Prepare live deposit**; the user reviews the quote and then confirms any NEAR token transfer in their wallet. For other origin chains, Pocket Near shows the provider's deposit instructions and the user sends funds from their own wallet. The server only records the user's transaction hash and requests provider status; it cannot sign or send deposits. An active signed policy is checked before a deposit quote is saved. The monitoring agent only sends notifications and never signs or submits a transaction. The database enum retains `auto_inside_policy` for compatibility, but the application disables that mode and normalizes existing users to notify-only without changing the enum.
 
 The API does not store a wallet private key or use a TEE signer. Unlock passwords are 10–128 characters, stored only as per-user salted scrypt hashes, and used for policy changes and protected settings. Passwords are never retained in browser storage or sent in Telegram.
 ## Monorepo
@@ -19,7 +19,7 @@ packages/
   shared/    Runtime schemas, policy evaluator, shared types
 ```
 
-PostgreSQL stores optional Telegram account IDs, NEAR account IDs, short-lived single-use wallet and policy challenges, signed policy envelopes, short-lived quote cache entries, audit events, price watchlists and alerts, alert deduplication records, and optional discover-open events. Secrets are loaded only from environment variables.
+PostgreSQL stores optional Telegram account IDs, NEAR account IDs, short-lived single-use wallet and policy challenges, signed policy envelopes, short-lived quote cache entries, each user's own Intents quote/deposit/status record, audit events, price watchlists and alerts, alert deduplication records, and optional discover-open events. Secrets are loaded only from environment variables.
 
 The five personal tabs share one authenticated Mini App session. Watch shows all pairs in the active signed policy first, then separates live market prices from the Intents-backed memecoin board; it never requests trade quotes. Swap is the only screen that requests 1Click quotes. Discover separates curated apps, DeFi/earn and game links from NEAR Agent Market listings. Marketplace detail and hire links stay on Market's buyer flow. Me shows the full NEAR `accountId` as the Pocket identity, the multi-pair policy editor (up to 30 signed pairs), My Agent controls and account safety. Quests are marked coming soon and have no rewards or completion logic. Catalog results are cached for 60–120 seconds, default 90. Pocket Near does not reproduce Agent Market escrow, disputes, or payouts. Telegram workers only run in a persistent bot process; Vercel serverless functions do not keep intervals alive.
 
@@ -54,7 +54,7 @@ Successful aggregates are kept in process memory for 10 minutes and concurrent r
    node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
    ```
 
-   Set that value as `SESSION_SECRET`. Configure `TELEGRAM_BOT_TOKEN` and `PUBLIC_APP_URL`. `ONE_CLICK_JWT` is optional for public 1-Click dry quotes. For Telegram testing, set `PUBLIC_APP_URL` to your HTTPS tunnel or deployment URL, and set `ALLOWED_ORIGINS` to the Mini App origin.
+   Set that value as `SESSION_SECRET`. Configure `TELEGRAM_BOT_TOKEN` and `PUBLIC_APP_URL`. Set `ONE_CLICK_JWT` in the API server environment to enable executable Intents quotes, deposit notifications, and status checks. It is never sent to or bundled with the Mini App; dry quote previews may work without it. For Telegram testing, set `PUBLIC_APP_URL` to your HTTPS tunnel or deployment URL, and set `ALLOWED_ORIGINS` to the Mini App origin.
 
 3. Install packages and start the API and Mini App:
 
@@ -80,16 +80,18 @@ Successful aggregates are kept in process memory for 10 minutes and concurrent r
 2. Open the Mini App from Telegram (or the development browser session), then connect a NEAR wallet and verify the wallet challenge.
 3. In **You → My Agent**, create an unlock password once, choose a pair and limits, and sign the policy in the wallet. Turn on notifications to scan only those signed pairs; every swap still requires wallet approval.
 4. Open **Watch** to see policy chips and available live price context. Tap a pair's **Swap this pair** action; in **Swap**, set amount and any required destination/refund address, request a quote, and inspect output, route, fees, expiry, and allow/block decision.
-5. Use Swap to request a quote. Rhea NEAR swaps can be submitted by your wallet; 1Click Intents quotes are dry previews and do not submit deposits. Share a quote preview through Telegram's in-app link handler; the tweet intent says it is not submitted and does not claim a fill.
+5. Use Swap to request a quote. For Intents, review the dry quote and policy decision, choose **Prepare live deposit**, review the fresh amount and address, then either approve the NEAR token transfer in your wallet or send from your own origin-chain wallet and enter its transaction hash. The app submits the hash to 1-Click and refreshes the provider status; only a provider-reported `SUCCESS` means the swap completed. Share a quote preview through Telegram's in-app link handler; the tweet intent says it is not submitted and does not claim a fill.
 6. In **Me**, verify the full wallet `accountId` identity and inspect profile, security, locks, policy, and agent events. Check the **Market prices** and **Memecoin board** segments in Watch. **Discover** separates Explore from Discover NEAR agents; memes and quests never use placeholder assets or rewards. `/status`, `/lock`, and `/unlock` remain the Telegram control plane; chat never collects passwords.
 
 When opened in Telegram Web, the app reads verified `initData` from the Telegram WebApp bridge or Telegram launch parameters. A plain browser URL starts in public read-only mode; connect a NEAR wallet and sign the one-time login challenge to open personal features. Background alerts still require a Telegram-linked account.
 
-### Verifying live dry quotes
+### Verifying Intents swap deposits
 
 In the Telegram Mini App, connect a wallet, open **Swap**, choose assets from the live Intents asset list, enter a positive amount, and tap **Get live quote**. For the USDC (NEAR) → wNEAR (NEAR) example, enter `10`; the API converts it to the 6-decimal base-unit amount `10000000`. Also check the reverse wNEAR → USDC route with `0.1`, and USDC → USDT with `10`. The request uses full Intents asset IDs, the connected account as `sender`, and the account as `recipient`/`refundTo` for NEAR-chain legs. The UI shows the provider's output, minimum output and fee fields when present, expiry, provider, and stale-cache status; it does not invent a route when 1-Click omits route data.
 
-The adapter reads output from `quote.amountOut` (and `quote.amountOutFormatted` for display), minimum output from `quote.minAmountOut`, fees from `quote.refundFee` and `quote.withdrawFee`, and provider expiry from `quote.deadline` or other recognized expiry fields. A `dry: true` response normally omits `quote.deadline`; when the output amount is valid, the adapter assigns a client-derived 55-second preview expiry. This is not a settlement deadline. A recent successful quote may be returned as visibly stale cache only after a retryable live-provider failure.
+To prepare a deposit, configure `ONE_CLICK_JWT` in the API environment, sign an active policy that allows the pair/amount/destination, then select **Prepare live deposit**. The API rechecks that policy and requests a new `dry: false` quote; a cached, expired, or incomplete quote cannot be used. Review the deposit amount, output estimate, address, and memo before sending anything. For a NEAR-origin NEP-141 asset, the connected wallet signs a standard `ft_transfer` to the provider address with one yocto attached and includes the provider memo if supplied. For other origin chains, Pocket Near does not access the chain wallet; send exactly as instructed from your wallet and enter the resulting transaction hash. The API submits that hash to 1-Click and stores the provider status on the signed-in user's swap record. Pending swaps can be refreshed from Swap; the app polls the status after a transaction hash is registered.
+
+The adapter reads output from `quote.amountOut` (and `quote.amountOutFormatted` for display), minimum output from `quote.minAmountOut`, fees from `quote.refundFee` and `quote.withdrawFee`, and provider expiry from `quote.deadline` or other recognized expiry fields. A `dry: true` response normally omits `quote.deadline`; when the output amount is valid, the adapter assigns a client-derived 55-second preview expiry. This is not a settlement deadline. A recent successful dry quote may be returned as visibly stale cache only after a retryable live-provider failure. Executable quotes are never cached and cannot use stale previews.
 
 ## Deploying to Vercel
 
@@ -121,7 +123,7 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `TELEGRAM_BOT_TOKEN` | BotFather token; absent disables bot startup |
 | `TELEGRAM_WEBHOOK_URL` | Optional full webhook URL; absent uses development long polling |
 | `TELEGRAM_WEBHOOK_SECRET` | Telegram webhook secret token |
-| `ONE_CLICK_JWT` | Optional server-side NEAR Intents partner JWT; public dry quotes are attempted without it; never send it to the browser |
+| `ONE_CLICK_JWT` | Server-side NEAR Intents partner JWT required for executable quotes, deposit notifications, and status refresh; dry previews may work without it; never send it to the browser |
 | `ONE_CLICK_BASE_URL` | 1Click API base URL |
 | `EXPLORER_JWT` | Required server-only bearer JWT for NEAR Intents Explorer network metrics; never expose to the Mini App |
 

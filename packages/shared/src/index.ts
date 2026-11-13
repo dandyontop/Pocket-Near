@@ -52,13 +52,22 @@ export const quoteInputSchema = z.object({
 });
 export type QuoteInput = z.infer<typeof quoteInputSchema>;
 
-export interface QuoteView {
-  id: string; provider: "one-click" | "cache" | "rhea";
-  originAsset: string; destinationAsset: string; amountIn: string; amountOut: string;
-  amountOutFormatted?: string; minAmountOut?: string; route: string[]; fees: Array<{ asset: string; amount: string; kind: string }>;
-  expiresAt: string; slippageBps: number; stale: boolean; depositAddress?: string;
-  raw: Record<string, unknown>;
-}
+export const quoteViewSchema=z.object({
+  id:z.string().min(1),provider:z.enum(["one-click","cache","rhea"]),
+  originAsset:z.string().min(1),destinationAsset:z.string().min(1),amountIn:z.string(),amountOut:z.string(),
+  amountOutFormatted:z.string().optional(),minAmountOut:z.string().optional(),route:z.array(z.string()),fees:z.array(z.object({asset:z.string(),amount:z.string(),kind:z.string()})),
+  expiresAt:z.string().datetime(),slippageBps:z.number().int().min(1).max(500),stale:z.boolean(),depositAddress:z.string().optional(),depositMemo:z.string().optional(),
+  raw:z.record(z.unknown()),
+});
+export type QuoteView=z.infer<typeof quoteViewSchema>;
+export const intentSwapStatusSchema=z.enum(["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS","INCOMPLETE_DEPOSIT","REFUNDED","FAILED"]);
+export type IntentSwapStatus=z.infer<typeof intentSwapStatusSchema>;
+export const intentSwapSchema=z.object({
+  id:z.string().uuid(),quoteId:z.string().min(1),quote:quoteViewSchema,originChain:z.string().min(1),originTokenContract:z.string().nullable(),
+  status:intentSwapStatusSchema,depositTxHash:z.string().nullable(),statusDetails:z.record(z.unknown()).nullable(),
+  createdAt:z.string().datetime(),updatedAt:z.string().datetime(),
+});
+export type IntentSwap=z.infer<typeof intentSwapSchema>;
 
 export interface PolicyUsage { dayAmount: string; weekAmount: string; dayKey: string; weekKey: string }
 export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };

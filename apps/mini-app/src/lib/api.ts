@@ -1,4 +1,4 @@
-import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview } from "@pocket-near/shared";
+import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 export class ApiRequestError extends Error {
@@ -34,6 +34,10 @@ export const api={
   savePassword:(password:string,currentPassword?:string)=>request<{saved:boolean}>("/api/security/password",{method:"POST",body:JSON.stringify({password,currentPassword})}),
   verifyUnlock:(password:string)=>request<{unlocked:boolean}>("/api/security/verify",{method:"POST",body:JSON.stringify({password})}),
   quote:(input:QuoteInput)=>request<{quote:QuoteView;source:string;autoEligible:boolean}>("/api/quotes",{method:"POST",body:JSON.stringify(input)}),
+  startIntentSwap:(quoteId:string)=>request<{swap:IntentSwap;reused:boolean}>("/api/swaps/start",{method:"POST",body:JSON.stringify({quoteId})}),
+  intentSwaps:()=>request<{swaps:IntentSwap[]}>("/api/swaps"),
+  submitIntentDeposit:(id:string,txHash:string)=>request<{swap:IntentSwap}>(`/api/swaps/${encodeURIComponent(id)}/deposit`,{method:"POST",body:JSON.stringify({txHash})}),
+  refreshIntentSwap:(id:string)=>request<{swap:IntentSwap}>(`/api/swaps/${encodeURIComponent(id)}/status`),
   evaluate:(quoteId:string,recordPreview=false,userInitiated=true)=>request<{decision:{allowed:boolean;reason?:string};executionMode:string;message:string}>("/api/agent/evaluate",{method:"POST",body:JSON.stringify({quoteId,recordPreview,userInitiated})}),
   events:()=>request<{events:Array<{event_type:string;details:Record<string,unknown>;created_at:string}>}>("/api/events"),
   portfolio:()=>request<{accountId:string;balances:Array<{assetId:string;symbol:string;amount:string;decimals:number;locked:string;source:string;blockHeight:number}>;failures:string[]}>("/api/portfolio"),

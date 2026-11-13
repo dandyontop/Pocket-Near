@@ -53,6 +53,21 @@ export function migrate(): Promise<void> {
       quote_id TEXT NOT NULL, quote JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY(user_id,quote_id)
     );
+    CREATE TABLE IF NOT EXISTS intent_swaps (
+      id UUID PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      quote_id TEXT NOT NULL, preview_quote_id TEXT, quote JSONB NOT NULL, origin_chain TEXT NOT NULL, origin_token_contract TEXT,
+      deposit_address TEXT NOT NULL, deposit_memo TEXT,
+      status TEXT NOT NULL CHECK(status IN ('PENDING_DEPOSIT','KNOWN_DEPOSIT_TX','PROCESSING','SUCCESS','INCOMPLETE_DEPOSIT','REFUNDED','FAILED')),
+      deposit_tx_hash TEXT, status_details JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(user_id,quote_id)
+    );
+    ALTER TABLE intent_swaps ADD COLUMN IF NOT EXISTS preview_quote_id TEXT;
+    ALTER TABLE intent_swaps ADD COLUMN IF NOT EXISTS origin_token_contract TEXT;
+    UPDATE intent_swaps SET preview_quote_id=quote_id WHERE preview_quote_id IS NULL;
+    ALTER TABLE intent_swaps ALTER COLUMN preview_quote_id SET NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS intent_swaps_user_preview_quote_idx ON intent_swaps(user_id,preview_quote_id);
+    CREATE INDEX IF NOT EXISTS intent_swaps_user_created_idx ON intent_swaps(user_id,created_at DESC);
     CREATE TABLE IF NOT EXISTS execution_events (
       id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       event_type TEXT NOT NULL CHECK (event_type IN ('blocked','preview','submitted','success','failed')),
@@ -140,6 +155,7 @@ export function migrate(): Promise<void> {
     ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
     ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE live_quotes ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE intent_swaps ENABLE ROW LEVEL SECURITY;
     ALTER TABLE execution_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_watchlist ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;

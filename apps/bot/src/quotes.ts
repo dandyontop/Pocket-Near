@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ApiError, OneClickService, OpenAPI, QuoteRequest, type QuoteResponse, type TokenResponse } from "@defuse-protocol/one-click-sdk-typescript";
+import { ApiError, OneClickService, OpenAPI, QuoteRequest, type CancelablePromise, type GetExecutionStatusResponse, type QuoteResponse, type SubmitDepositTxRequest, type SubmitDepositTxResponse, type TokenResponse } from "@defuse-protocol/one-click-sdk-typescript";
 import { quoteInputSchema, type QuoteInput, type QuoteView } from "@pocket-near/shared";
 import { pool } from "./db.js";
 import { env } from "./env.js";
@@ -18,6 +18,16 @@ export class QuoteRequestError extends Error {
   }
 }
 
+function withTimeout<T>(request: CancelablePromise<T>, label: string): Promise<T> {
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{
+      request.cancel();
+      reject(new QuoteProviderError(`${label} timed out.`,504));
+    },15_000);
+    request.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});
+  });
+}
+
 export class QuoteProviderError extends Error {
   constructor(message: string, readonly status: number = 502, readonly retryable = true) {
     super(message);
@@ -31,7 +41,7 @@ let tokenRequest: Promise<TokenResponse[]> | undefined;
 async function getTokens(): Promise<TokenResponse[]> {
   if (tokenCache && tokenCache.expiresAt > Date.now()) return tokenCache.tokens;
   if (!tokenRequest) {
-    tokenRequest = OneClickService.getTokens()
+    tokenRequest = withTimeout(OneClickService.getTokens(),"The 1-Click asset catalog request")
       .then(tokens => {
         tokenCache = { tokens, expiresAt: Date.now() + 60_000 };
         return tokens;
@@ -165,7 +175,8 @@ function normalize(raw: unknown, input: QuoteInput, stale = false, dry = true): 
     const item = asObj(value);
     return str(item.name ?? item.provider ?? item.asset ?? value);
   }).filter(Boolean);
-  const deposit = str(quote.depositAddress ?? quote.deposit_address);
+  const deposit = str(quote.depositAddress ?? quote.deposit_address ?? root.depositAddress ?? root.deposit_address);
+  const depositMemo = str(quote.depositMemo ?? quote.deposit_memo ?? root.depositMemo ?? root.deposit_memo);
   return {
     id: str(root.correlationId ?? quote.quoteId ?? quote.quote_hash ?? quote.id) || createHash("sha256").update(JSON.stringify(raw)).digest("hex").slice(0, 20),
     provider: stale ? "cache" : "one-click",
@@ -181,7 +192,8 @@ function normalize(raw: unknown, input: QuoteInput, stale = false, dry = true): 
     slippageBps: input.slippageToleranceBps,
     stale,
     ...(deposit ? { depositAddress: deposit } : {}),
-    raw: { ...quote, recipient: input.recipient },
+    ...(depositMemo ? { depositMemo } : {}),
+    raw: { ...quote, originAsset:input.originAsset, destinationAsset:input.destinationAsset, requestedAmount:input.amount, sender:input.sender, recipient: input.recipient, refundTo:input.refundTo },
   };
 }
 
@@ -191,9 +203,9 @@ function quoteDeadline(origin: TokenResponse, destination: TokenResponse): strin
   return new Date(Date.now() + timeoutMs).toISOString();
 }
 
-function quoteRequest(input: QuoteInput, origin: TokenResponse, destination: TokenResponse): QuoteRequest {
+function quoteRequest(input: QuoteInput, origin: TokenResponse, destination: TokenResponse, dry: boolean): QuoteRequest {
   return {
-    dry: true,
+    dry,
     swapType: QuoteRequest.swapType.EXACT_INPUT,
     slippageTolerance: input.slippageToleranceBps,
     originAsset: input.originAsset,
@@ -208,7 +220,12 @@ function quoteRequest(input: QuoteInput, origin: TokenResponse, destination: Tok
   };
 }
 
-export async function fetchLiveQuote(inputValue: unknown): Promise<{ quote: QuoteView; source: "live" | "cached" }> {
+export async function getSupportedToken(assetId:string):Promise<TokenResponse|undefined>{
+  return (await getTokens()).find(token=>token.assetId===assetId);
+}
+
+export async function fetchLiveQuote(inputValue: unknown, options:{dry?:boolean}={}): Promise<{ quote: QuoteView; source: "live" | "cached" }> {
+  const dry=options.dry??true;
   const input = await validateQuoteInput(inputValue);
   const tokens = await getTokens();
   const origin = tokens.find(token => token.assetId === input.originAsset)!;
@@ -216,18 +233,18 @@ export async function fetchLiveQuote(inputValue: unknown): Promise<{ quote: Quot
   const key = createHash("sha256").update(JSON.stringify(input)).digest("hex");
   let quote: QuoteView;
   try {
-    const response: QuoteResponse = await OneClickService.getQuote(quoteRequest(input, origin, destination));
+    const response: QuoteResponse = await withTimeout(OneClickService.getQuote(quoteRequest(input, origin, destination,dry)),"The 1-Click quote request");
     if (env.NODE_ENV === "development") {
       const responseObject = asObj(response);
-      console.info("1-Click dry quote response shape", {
+      console.info(`1-Click ${dry?"dry":"deposit"} quote response shape`, {
         rootKeys: Object.keys(responseObject),
         quoteKeys: Object.keys(asObj(responseObject.quote)),
       });
     }
-    quote = normalize(response, input);
+    quote = normalize(response, input,false,dry);
   } catch (error) {
     const failure = providerError(error, "The 1-Click quote provider is temporarily unavailable.");
-    if (!failure.retryable) throw failure;
+    if (!dry||!failure.retryable) throw failure;
     const cached = await pool.query<{ quote: QuoteView }>(
       "SELECT quote FROM quote_cache WHERE cache_key=$1 AND cached_at > now() - ($2 * interval '1 second')",
       [key, env.QUOTE_CACHE_TTL_SECONDS],
@@ -236,9 +253,22 @@ export async function fetchLiveQuote(inputValue: unknown): Promise<{ quote: Quot
     throw failure;
   }
 
-  await pool.query(
+  if(dry)await pool.query(
     "INSERT INTO quote_cache(cache_key,quote,cached_at) VALUES($1,$2,now()) ON CONFLICT(cache_key) DO UPDATE SET quote=EXCLUDED.quote,cached_at=now()",
     [key, JSON.stringify(quote)],
   );
   return { quote, source: "live" };
+}
+
+export async function submitDepositTx(request:SubmitDepositTxRequest):Promise<SubmitDepositTxResponse>{
+  try{return await withTimeout(OneClickService.submitDepositTx(request),"The 1-Click deposit notification");}
+  catch(error){throw providerError(error,"The 1-Click deposit notification failed.");}
+}
+
+export async function getExecutionStatus(depositAddress:string,depositMemo?:string):Promise<GetExecutionStatusResponse>{
+  try{return await withTimeout(OneClickService.getExecutionStatus(depositAddress,depositMemo),"The 1-Click status request");}
+  catch(error){
+    if(error instanceof ApiError&&error.status===404)throw new QuoteProviderError("1-Click has not found this swap yet. Try again shortly.",404);
+    throw providerError(error,"The 1-Click status service is temporarily unavailable.");
+  }
 }
