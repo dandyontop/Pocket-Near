@@ -66,7 +66,7 @@ export type RheaSwapQuote={amount_in:string;amount_out:string;min_amount_out:str
 export async function getRheaSwapQuote(input:{amount:string;tokenIn:string;tokenOut:string;user:string;slippageBps:number}):Promise<RheaSwapQuote>{
   const url=new URL("https://smartx.rhea.finance/swapMultiDexPath");
   url.searchParams.set("amountIn",input.amount);url.searchParams.set("tokenIn",input.tokenIn);url.searchParams.set("tokenOut",input.tokenOut);url.searchParams.set("slippage",String(input.slippageBps/10_000));url.searchParams.set("user",input.user);
-  const response=await fetch(url,{signal:AbortSignal.timeout(15_000)});if(!response.ok)throw Object.assign(new Error("Rhea could not find a live route for this NEAR token pair."),{status:response.status===400?422:502});
+  const response=await fetch(url,{signal:AbortSignal.timeout(15_000)});if(!response.ok)throw Object.assign(new Error("Rhea has no live route for this NEAR token pair and amount. Try another pair or amount; no swap was submitted."),{status:[400,404,422].includes(response.status)?422:502});
   const data=obj(await response.json());
   if(!/^[1-9]\d*$/.test(text(data.amount_in))||! /^[1-9]\d*$/.test(text(data.amount_out))||! /^[1-9]\d*$/.test(text(data.min_amount_out))||typeof data.msg!=="string"||!data.msg||typeof data.signature!=="string"||!data.signature||!Array.isArray(data.tokens)||data.tokens.length===0||data.tokens.some(token=>typeof token!=="string"||!/^[a-z0-9._-]{2,64}$/.test(token)))throw Object.assign(new Error("Rhea returned an incomplete swap route; no transaction was prepared."),{status:502});
   return {amount_in:text(data.amount_in),amount_out:text(data.amount_out),min_amount_out:text(data.min_amount_out),msg:data.msg,signature:data.signature,tokens:data.tokens as string[]};

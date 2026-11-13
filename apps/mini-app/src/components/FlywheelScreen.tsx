@@ -57,7 +57,7 @@ export function FlywheelScreen(){
     </div>
     <p>Real Intents activity and clearly labeled scenarios. The wallet stays in control of every swap.</p>
     {loading&&!overview&&<article className="flywheel-state"><span className="loader"/><span>Loading the latest hourly snapshot…</span></article>}
-    {error&&!overview&&<article className="flywheel-state error"><strong>Flywheel data is not ready</strong><span>{error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></article>}
+    {error&&!overview&&<article className="flywheel-state error"><strong>Flywheel data is not ready</strong><span>{error}</span><p>For the first snapshot, the owner must configure the scheduled worker and server-only Explorer credentials. Retrying here cannot replace that setup.</p><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></article>}
     {overview&&<>
       <div className="flywheel-updated"><span>Snapshot computed {new Date(overview.updatedAt).toLocaleString()}</span><span>{overview.partial?"Partial Explorer sample":"Explorer sample complete"}</span></div>
       {overview.partial&&<div className="alert warning"><span>Explorer safety limits were reached. The sample may not cover the full rolling 24 hours.</span></div>}

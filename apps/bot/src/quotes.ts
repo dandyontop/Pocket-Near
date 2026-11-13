@@ -80,7 +80,7 @@ export async function validateQuoteInput(inputValue: unknown): Promise<QuoteInpu
   const tokens = await getTokens();
   const origin = tokens.find(token => token.assetId === input.originAsset);
   const destination = tokens.find(token => token.assetId === input.destinationAsset);
-  if (!origin || !destination) throw new QuoteRequestError("Choose origin and destination asset IDs returned by /api/assets.");
+  if (!origin || !destination) throw new QuoteRequestError("One or both assets are not in the live 1-Click catalog. Refresh the asset list and choose a supported Intents pair. Rhea-only NEAR pool assets can only be used together through Rhea.");
   if (origin.blockchain === "near" && !isNearAccount(input.refundTo)) {
     throw new QuoteRequestError("The refund address for a NEAR asset must be a valid NEAR account ID.");
   }

@@ -260,10 +260,12 @@ export function checkPolicy(policy: AgentPolicy, usage: PolicyUsage, quote: Quot
     catch { return false; }
     const weekday=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(local.find(p=>p.type==="weekday")?.value??"");
     const minute=Number(local.find(p=>p.type==="hour")?.value??"0")*60+Number(local.find(p=>p.type==="minute")?.value??"0");
-    if (!w.days.includes(weekday)) return false;
     const [sh, sm] = w.start.split(":").map(Number), [eh, em] = w.end.split(":").map(Number);
     const start = sh! * 60 + sm!, end = eh! * 60 + em!;
-    return start <= end ? minute >= start && minute <= end : minute >= start || minute <= end;
+    if(start<=end)return w.days.includes(weekday)&&minute>=start&&minute<=end;
+    return minute>=start
+      ?w.days.includes(weekday)
+      :minute<=end&&w.days.includes((weekday+6)%7);
   });
   return inWindow ? { allowed: true } : { allowed: false, reason: "Current time is outside the signed policy window." };
 }

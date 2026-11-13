@@ -281,7 +281,7 @@ export async function runFlywheelSnapshot():Promise<{updatedAt:string;partial:bo
 
 export async function getFlywheelOverview():Promise<FlywheelOverview>{
   const result=await pool.query<{aggregate:unknown}>("SELECT aggregate FROM flywheel_hourly_snapshots ORDER BY snapshot_hour DESC LIMIT 1");
-  if(!result.rowCount)throw new FlywheelOverviewError("The first hourly Intents aggregate has not run yet. Try again after the scheduled worker runs.",503);
+  if(!result.rowCount)throw new FlywheelOverviewError("No hourly Intents snapshot has completed yet. The scheduled worker must run successfully first; check its deployment schedule, database connection, and server-side Explorer credential.",503);
   const aggregate=flywheelOverviewSchema.parse(result.rows[0]!.aggregate);
   return flywheelOverviewSchema.parse({
     ...aggregate,

@@ -24,6 +24,9 @@ type PolicyEditorProps = {
   setWindowStart: (value: string) => void;
   windowEnd: string;
   setWindowEnd: (value: string) => void;
+  activeDaysLabel: string;
+  additionalWindowCount: number;
+  timezone: string;
   busy: boolean;
   passwordSet: boolean;
   canSign:boolean;
@@ -36,10 +39,11 @@ type PolicyEditorProps = {
 export function PolicyEditor({
   assets,accountId,pairs,onPairsChange,defaultFrom,defaultTo,maxTrade,setMaxTrade,daily,setDaily,
   weekly,setWeekly,maxSlippage,setMaxSlippage,destinationInput,setDestinationInput,windowStart,
-  setWindowStart,  windowEnd,setWindowEnd,busy,passwordSet,canSign,hasPolicy,frozen,onSign,onFreeze,
+  setWindowStart,  windowEnd,setWindowEnd,activeDaysLabel,additionalWindowCount,timezone,busy,passwordSet,canSign,hasPolicy,frozen,onSign,onFreeze,
 }:PolicyEditorProps){
   const assetById=new Map(assets.map(asset=>[asset.assetId,asset]));
   const limitAsset=pairs[0]?assetById.get(pairs[0].from):undefined;
+  const assetLabel=(asset:Asset)=>`${asset.symbol} · ${asset.blockchain}${asset.assetId.startsWith("near:")?" · Rhea pool":" · Intents"}`;
   const updatePair=(index:number,field:"from"|"to",value:string)=>{
     onPairsChange(pairs.map((pair,pairIndex)=>pairIndex===index?{...pair,[field]:value}:pair));
   };
@@ -56,7 +60,7 @@ export function PolicyEditor({
   };
   const assetOptions=(value:string,onChange:(value:string)=>void,label:string)=>(
     <label className="field">{label}<select value={value} onChange={event=>onChange(event.target.value)} aria-label={label}>
-      {assets.map(asset=><option key={asset.assetId} value={asset.assetId}>{asset.symbol} · {asset.blockchain}</option>)}
+      {assets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetLabel(asset)}</option>)}
     </select></label>
   );
 
@@ -80,7 +84,7 @@ export function PolicyEditor({
     </div>
     <div className="destination"><div className="destination-icon"><Wallet size={15}/></div><div><span>Wallet identity</span><strong>{accountId??"Connect your wallet"}</strong></div></div>
     <label className="field">Allowed destination addresses<input value={destinationInput} onChange={event=>setDestinationInput(event.target.value)} placeholder="Comma-separated wallet addresses"/><small>Only these recipients pass the policy check.</small></label>
-    <div className="window-note"><Clock3 size={15}/><span>Active every day · {windowStart}–{windowEnd}</span></div>
+    <div className="window-note"><Clock3 size={15}/><span>{activeDaysLabel} · {windowStart}–{windowEnd} ({timezone}){additionalWindowCount>0?` · ${additionalWindowCount} additional window${additionalWindowCount===1?"":"s"} preserved`:""}</span></div>
     <div className="form-grid">
       <label className="field">Window starts<input type="time" value={windowStart} onChange={event=>setWindowStart(event.target.value)}/></label>
       <label className="field">Window ends<input type="time" value={windowEnd} onChange={event=>setWindowEnd(event.target.value)}/></label>
