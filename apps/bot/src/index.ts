@@ -30,7 +30,7 @@ if(env.TELEGRAM_BOT_TOKEN){
     }
     await pool.query("UPDATE users SET agent_enabled=$1,agent_mode=CASE WHEN $1 THEN 'notify_only' ELSE 'off' END,auto_enabled=false,updated_at=now() WHERE telegram_id=$2",[action==="on",ctx.from.id]);return ctx.reply(action==="on"?"Agent monitoring is on in notify-only mode.":"Agent monitoring is off.");
   });
-  bot.command("auto",async ctx=>ctx.reply("Auto mode changes require your unlock password in the Mini App settings. Auto execution is not enabled by this bot command."));
+  bot.command("auto",async ctx=>ctx.reply("Auto execution is not supported. Pocket Near never signs or submits a swap for you; review each transaction and approve it in your wallet."));
   bot.command("freeze",async ctx=>{
     const user=await pool.query("SELECT u.id FROM users u JOIN policies p ON p.user_id=u.id WHERE u.telegram_id=$1",[ctx.from.id]);
     if(!user.rowCount)return ctx.reply("No saved policy was found. Open the Mini App to create one.");

@@ -1,19 +1,14 @@
 # Pocket Near
 
-Pocket Near is a Telegram-native NEAR super-pocket. Its Mini App has Home, Watch, Swap, Discover, and Me tabs. It connects to a user's own NEAR wallet, verifies wallet ownership with NEP-413 signatures, stores signed policies in PostgreSQL, and displays quotes from 1Click and the Solver Relay.
+Pocket Near is a non-custodial NEAR wallet companion. Its Mini App includes Home, Watch, Swap, Discover, and Me. Users connect their own NEAR wallet, sign policy and swap transactions themselves, and inspect NEAR and NEAR Intents market data.
 
 ## Security boundary
 
-The app never asks for, receives, or stores a wallet private key. Telegram launch data is HMAC-verified by the API before a short-lived, HttpOnly session cookie is issued. Policy data is canonicalized, signed by the connected wallet, and verified server-side with `near-api-js`. A separate unlock password is stored as a scrypt hash with a random salt.
+Pocket Near never asks for, receives, or stores a wallet private key. Telegram launch data is HMAC-verified before the API issues a short-lived HttpOnly session cookie. Wallet identity and policy envelopes are verified with NEP-413 signatures. Policy checks are performed by the API and are not an on-chain restriction.
 
-**No free-form trading chat is used.** The deterministic `packages/shared` `checkPolicy()` evaluator is the policy source of truth. Runtime `agent_mode` is `off`, `notify_only`, or `auto_inside_policy`; independent `master_lock` and `auto_exec_lock` values can prevent work. Workers skip a master-locked account, check signed policy freeze and usage, and only send notifications in notify-only mode. In auto mode an enabled TEE may sign an eligible intent payload, but the current deployment has no supported settlement/submission flow: a wallet signature and transaction submission are still required and no funds move automatically.
+Every supported swap is initiated by the user and approved by the user's wallet. Rhea NEAR swaps can be submitted by the wallet. NEAR Intents 1Click quotes currently use `dry: true`; they do not deposit, submit, or settle a swap. The monitoring agent only sends notifications and never signs or submits a transaction. The database enum retains `auto_inside_policy` for compatibility, but the application disables that mode and normalizes existing users to notify-only without changing the enum.
 
-The security boundary is: wallet signs policy → PostgreSQL stores its signed envelope → API/worker evaluates quotes with `checkPolicy()` → optional TEE signer validates again → user completes wallet authorization. Unlock passwords must be 10–128 characters and are stored only as per-user salted scrypt hashes. Passwords are entered only in an ephemeral dialog for policy signing, enabling auto mode, or clearing runtime locks; passwords are not retained in browser storage or sent in Telegram. Creating a password and every unlock action clear the UI input after completion or cancellation. The API host never stores a full wallet private key. The current 1Click quote flow yields a deposit address and this repository does not implement the Intents deposit/submission lifecycle. A TEE signature alone is not settlement, so the API records a signed preview and explicitly refuses to report a submitted/successful swap.
-
-The optional HTTP signer contract is `POST TEE_SIGNER_URL` with `{policy, quote, usage, intentPayload}` and expects `{signature, attestation?}`. Configure the URL to a Phala Shade or OutLayer enclave HTTP endpoint that implements this contract, performs `checkPolicy()` (or a faithful independently audited equivalent) inside the enclave, verifies the caller and payload, and keeps the limited key within the enclave. `TEE_SIGNER_API_KEY` is sent as a Bearer credential. Pointing this variable at an ordinary API does not create a TEE. The development signer is explicitly DEV-ONLY, only signs an envelope using `DEV_ENCLAVE_PRIVATE_KEY` when `NODE_ENV=development`, and does not submit transactions.
-
-Application policy checks are enforced in the API and are not a smart-contract restriction. A compromised application server could bypass those checks. For unattended execution, an independently audited, protocol-enforced scoped authorization or smart account is required; a function-call key to an unrestricted token or verifier method is not a safe substitute.
-
+The API does not store a wallet private key or use a TEE signer. Unlock passwords are 10–128 characters, stored only as per-user salted scrypt hashes, and used for policy changes and protected settings. Passwords are never retained in browser storage or sent in Telegram.
 ## Monorepo
 
 ```text
@@ -75,15 +70,15 @@ Successful aggregates are kept in process memory for 10 minutes and concurrent r
    - For local bot testing, leave `TELEGRAM_WEBHOOK_URL` unset; the bot uses long polling when `NODE_ENV=development`.
    - Open the bot and press **Open Pocket Near**. The backend validates Telegram's `initData`; browser preview uses the development-only session route.
 
-5. Connect a wallet, create the one-time unlock password in **Me**, add one or more asset pairs and limits, then unlock and sign the policy with your wallet. Try notify-only, master lock, and auto mode; enabling auto and clearing locks require the password dialog. No password input remains on the main screens. In **Watch**, inspect each signed policy pair; choose **Swap this pair** to prefill the user-driven Swap form, request a live quote, and review the policy decision. Any on-chain transaction must still be approved in the wallet.
+5. Connect a wallet, create the one-time unlock password in **Me**, add one or more asset pairs and limits, then unlock and sign the policy with your wallet. Try notify-only and the master lock. Auto execution is not supported. No password input remains on the main screens. In **Watch**, inspect each signed policy pair; choose **Swap this pair** to prefill the user-driven Swap form, request a live quote, and review the policy decision. Any on-chain transaction must still be approved in the wallet.
 
 ## Telegram mobile demo
 
 1. Start PostgreSQL and run `npm run db:migrate`, then start the API and Mini App with `npm run dev`.
 2. Open the Mini App from Telegram (or the development browser session), then connect a NEAR wallet and verify the wallet challenge.
-3. In **You → My Agent**, create an unlock password once, choose a pair and limits, and sign the policy in the wallet. Turn on monitoring to scan only those signed pairs; auto mode remains password-gated and never reports an unsigned fill.
+3. In **You → My Agent**, create an unlock password once, choose a pair and limits, and sign the policy in the wallet. Turn on notifications to scan only those signed pairs; every swap still requires wallet approval.
 4. Open **Watch** to see policy chips and available live price context. Tap a pair's **Swap this pair** action; in **Swap**, set amount and any required destination/refund address, request a quote, and inspect output, route, fees, expiry, and allow/block decision.
-5. Use the ephemeral unlock prompt to prepare a policy-approved preview. The UI distinguishes TEE-off/error from a TEE-signed preview and states that no quote was submitted or settled. Share a quote preview through Telegram's in-app link handler; the tweet intent says it is not submitted and does not claim a fill.
+5. Use Swap to request a quote. Rhea NEAR swaps can be submitted by your wallet; 1Click Intents quotes are dry previews and do not submit deposits. Share a quote preview through Telegram's in-app link handler; the tweet intent says it is not submitted and does not claim a fill.
 6. In **Me**, verify the full wallet `accountId` identity and inspect profile, security, locks, policy, and agent events. Check the **Market prices** and **Memecoin board** segments in Watch. **Discover** separates Explore from Discover NEAR agents; memes and quests never use placeholder assets or rewards. `/status`, `/lock`, and `/unlock` remain the Telegram control plane; chat never collects passwords.
 
 Telegram Web requires a valid Telegram Mini App launch context just like the mobile client. The app reads verified `initData` from the Telegram WebApp bridge or Telegram launch parameters and never creates a production session for a plain browser URL. If launch data is missing, open Pocket Near using its Telegram bot/Mini App button.
@@ -127,17 +122,16 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `ONE_CLICK_JWT` | Optional server-side NEAR Intents partner JWT; public dry quotes are attempted without it; never send it to the browser |
 | `ONE_CLICK_BASE_URL` | 1Click API base URL |
 | `EXPLORER_JWT` | Required server-only bearer JWT for NEAR Intents Explorer network metrics; never expose to the Mini App |
-| `SOLVER_RELAY_URL` | Official Message Bus JSON-RPC endpoint |
+
 | `NEAR_RPC_URL` | NEAR RPC endpoint used to validate wallet signatures |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed by CORS |
 | `QUOTE_CACHE_TTL_SECONDS` | Maximum quote-cache age; cached quotes are marked stale and cannot pass policy checks |
 | `MAX_INIT_DATA_AGE_SECONDS` | Maximum Telegram launch-data age |
 | `AGENT_WORKER_ENABLED` | Enable the PostgreSQL-backed Telegram quote worker (`true`/`false`, default false) |
 | `AGENT_WORKER_INTERVAL_MS` | Worker polling interval, 5,000–300,000 ms |
-| `TEE_SIGNER_ENABLED` | Enable signer requests; disabled means execute fails closed |
-| `TEE_SIGNER_URL` | HTTPS endpoint implementing the enclave signer contract |
-| `TEE_SIGNER_API_KEY` | Optional Bearer credential for the signer endpoint |
-| `DEV_ENCLAVE_PRIVATE_KEY` | Development-only signing secret; ignored outside `NODE_ENV=development` |
+
+
+
 | `COINGECKO_API_KEY` | Optional CoinGecko demo API key to improve rate-limit headroom |
 | `PRICE_ASSET_IDS` | Comma-separated CoinGecko asset IDs for the default market list |
 | `PRICES_CACHE_TTL_SECONDS` | Price cache TTL, 30–60 seconds (default 45) |
@@ -148,11 +142,11 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 
 - Telegraf `/start`, `/help`, `/prices`, `/alerts`, `/status`, `/lock`, `/unlock`, `/freeze`, and `/agent on|off` controls with Mini App links.
 - Optional backend quote worker for enabled and unlocked users, with policy/usage checks, preview audit records, and Telegram review alerts. It does not settle a transaction.
-- Provider-agnostic TEE signer interface with fail-closed HTTP integration and a development-only envelope signer.
+
 - Telegram `initData` authentication, HttpOnly session cookie, rate limiting, and wallet ownership proof.
 - HOT Labs NEAR Connect wallet integration; policy signing and API verification use NEP-413.
 - Live supported-asset list and 1Click quote integration through the official TypeScript SDK.
-- Solver Relay JSON-RPC fallback for live solver quotes, then a bounded PostgreSQL cache fallback.
+
 - Quote display with provider, route, fees where provided, output, slippage request, and expiry.
 - Signed policy for an allowlisted asset pair and destination, per-trade/daily/weekly base-unit caps, time window, max slippage, and emergency freeze.
 - API-side policy checks on each agent evaluation, blocked-attempt audit records, password protection for policy changes, and quote polling while the Mini App remains open.
@@ -175,7 +169,7 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 - Pool-level APY is available for some NEAR pools from DeFiLlama Yields, including Rhea entries, but its free yield endpoints are scheduled to shut down on November 13, 2026 and the replacement requires a paid API plan. Those records are not yet reliably mapped to every Rhea pool-index ID, so the worker does not use protocol-level rates as if they were a particular pool's APR.
 - Portfolio balances are not inferred from the shared partner JWT. Intents balance access requires a user-scoped authorization flow.
 - The account policy is signed off-chain and checked by this API; it is not enforced by the Intents Verifier contract.
-- Auto mode can request a constrained TEE signature only when configured. Settlement and transfer submission are unsupported, so the feature stops before funds move. Clearing `master_lock` or `auto_exec_lock`, enabling `auto_inside_policy`, and signing a changed policy require a valid password. Turning a lock on and changing notify/off mode do not.
+- Auto execution is disabled. The legacy `auto_inside_policy` enum value remains in the database for compatibility; existing rows are normalized to `notify_only`. The agent only notifies and cannot sign or submit swaps.
 - Agent Market's buyer hire flow may leave Telegram for Market authentication. Public catalog requests require no Market credential; no private buyer endpoint or jobs feed is proxied.
 - Named-account creation is handled by the selected wallet onboarding experience and is not provisioned by Pocket Near.
 - This application needs a security review, load testing, operational monitoring, and protocol-scoped authorization before it can be considered production-ready for autonomous asset movement.
@@ -193,7 +187,6 @@ No API secret, full private key, or signing key belongs in `.env` or PostgreSQL.
 
 - [1Click API lifecycle and quote endpoint](https://docs.near-intents.org/integration/distribution-channels/1click-api)
 - [1Click TypeScript SDK](https://github.com/defuse-protocol/one-click-sdk-typescript)
-- [Solver Relay JSON-RPC reference](https://docs.near-intents.org/integration/market-makers/message-bus/rpc)
 - [Verifier account keys and signature flow](https://docs.near-intents.org/integration/verifier-contract/account-abstraction)
 - [Telegram Mini App launch-data validation](https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app)
 - [Rhea pooling documentation](https://guide.rhea.finance/near-chain-guides/how-rhea-finance-works/pooling)

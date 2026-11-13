@@ -11,12 +11,12 @@ async function request<T>(path:string,init:RequestInit={}):Promise<T>{
     throw new Error("The API returned an invalid response.");
   }
   if(!data)throw new Error("The API returned an empty response.");
-  if(!response.ok&&!(path==="/api/agent/execute"&&Boolean((data as {requiresWalletSignature?:boolean}).requiresWalletSignature)))throw new Error(data.error??`Request failed (${response.status})`);
+  if(!response.ok)throw new Error(data.error??`Request failed (${response.status})`);
   return data;
 }
 export const api={
   me:()=>request<{accountId:string|null,passwordSet:boolean;agentEnabled:boolean;autoEnabled:boolean}>("/api/auth/me"),
-  agentSettings:(data:{agentEnabled?:boolean;mode?:"off"|"notify_only"|"auto_inside_policy";masterLock?:boolean;autoExecLock?:boolean;password?:string})=>request<{agentEnabled:boolean;mode:"off"|"notify_only"|"auto_inside_policy";masterLock:boolean;autoExecLock:boolean}>("/api/agent/settings",{method:"PUT",body:JSON.stringify(data)}),
+  agentSettings:(data:{agentEnabled?:boolean;mode?:"off"|"notify_only";masterLock?:boolean;password?:string})=>request<{agentEnabled:boolean;mode:"off"|"notify_only"|"auto_inside_policy";masterLock:boolean;autoExecLock:boolean}>("/api/agent/settings",{method:"PUT",body:JSON.stringify(data)}),
   agentStatus:()=>request<AgentStatus>("/api/agent/status"),
   login:(initData:string)=>request<{authenticated:boolean}>("/api/auth/telegram",{method:"POST",body:JSON.stringify({initData})}),
   walletChallenge:(accountId:string)=>request<{message:string;recipient:string;nonce:string}>("/api/wallet/challenge",{method:"POST",body:JSON.stringify({accountId})}),
@@ -32,7 +32,6 @@ export const api={
   verifyUnlock:(password:string)=>request<{unlocked:boolean}>("/api/security/verify",{method:"POST",body:JSON.stringify({password})}),
   quote:(input:QuoteInput)=>request<{quote:QuoteView;source:string;autoEligible:boolean}>("/api/quotes",{method:"POST",body:JSON.stringify(input)}),
   evaluate:(quoteId:string,recordPreview=false,userInitiated=true)=>request<{decision:{allowed:boolean;reason?:string};executionMode:string;message:string}>("/api/agent/evaluate",{method:"POST",body:JSON.stringify({quoteId,recordPreview,userInitiated})}),
-  execute:(quoteId:string,password:string)=>request<{error:string;requiresWalletSignature?:boolean;signed?:boolean;attestation?:unknown}>("/api/agent/execute",{method:"POST",body:JSON.stringify({quoteId,password,userInitiated:true})}),
   events:()=>request<{events:Array<{event_type:string;details:Record<string,unknown>;created_at:string}>}>("/api/events"),
   portfolio:()=>request<{accountId:string;balances:Array<{assetId:string;symbol:string;amount:string;decimals:number;locked:string;source:string;blockHeight:number}>;failures:string[]}>("/api/portfolio"),
   investmentPreferences:()=>request<{preferences:{alertsEnabled:boolean;symbols:string[];positionMonitoring:boolean;reportFrequency:number;lastSuggestionAt:string|null;nextPositionReportAt:string|null}}>("/api/investments/preferences"),

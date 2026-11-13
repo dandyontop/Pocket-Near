@@ -12,7 +12,6 @@ import { env } from "./env.js";
 import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
 import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
 import { fetchLiveQuote, QuoteProviderError, QuoteRequestError } from "./quotes.js";
-import { teeSigner } from "./tee/signer.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 import { getMarketAgent, listMarketAgents } from "./marketplace.js";
 import { getNetworkOverview, NetworkOverviewError } from "./networkOverview.js";
@@ -37,7 +36,7 @@ const challenges = new Map<number,string>();
 const walletChallenges = new Map<number,{nonce:string;message:string}>();
 
 app.disable("x-powered-by");
-app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc:["'self'"],scriptSrc:["'self'","https://telegram.org"],styleSrc:["'self'","'unsafe-inline'","https://fonts.googleapis.com"],fontSrc:["'self'","data:","https://fonts.gstatic.com"],imgSrc:["'self'","data:","https:"],connectSrc:["'self'",...origins,"https://1click.chaindefuser.com","https://rpc.mainnet.near.org","https://solver-relay-v2.chaindefuser.com","wss://solver-relay-v2.chaindefuser.com"] } } }));
+app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc:["'self'"],scriptSrc:["'self'","https://telegram.org"],styleSrc:["'self'","'unsafe-inline'","https://fonts.googleapis.com"],fontSrc:["'self'","data:","https://fonts.gstatic.com"],imgSrc:["'self'","data:","https:"],connectSrc:["'self'",...origins,"https://1click.chaindefuser.com","https://rpc.mainnet.near.org"] } } }));
 app.use(cors({ origin(origin, cb) { if (!origin || origins.has(origin)) return cb(null,true); cb(new Error("Origin is not allowed.")); }, credentials: true }));
 app.use(compression());
 app.use(cookieParser());
@@ -226,17 +225,14 @@ app.get("/api/agent/status",requireSession,asyncRoute(async(req,res)=>{
   res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:r.auto_exec_lock,freeze:Boolean(r.body?.freeze),passwordSet:r.password_set,policyActive:Boolean(r.policy_active),lastRunAt:r.last_run_at,lastError:r.last_error,policy:r.body??null,lastEvents:events.rows});
 }));
 app.put("/api/agent/settings",requireSession,asyncRoute(async(req,res)=>{
-  const body=z.object({agentEnabled:z.boolean().optional(),mode:z.enum(["off","notify_only","auto_inside_policy"]).optional(),masterLock:z.boolean().optional(),autoExecLock:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.mode!==undefined||v.masterLock!==undefined||v.autoExecLock!==undefined).parse(req.body);
-  const current=(await pool.query<{master_lock:boolean;auto_exec_lock:boolean;agent_mode:string;agent_enabled:boolean}>("SELECT master_lock,auto_exec_lock,agent_mode,agent_enabled FROM users WHERE id=$1",[req.userId])).rows[0]!;
+  const body=z.object({agentEnabled:z.boolean().optional(),mode:z.enum(["off","notify_only"]).optional(),masterLock:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.mode!==undefined||v.masterLock!==undefined).parse(req.body);
+  const current=(await pool.query<{master_lock:boolean;agent_mode:string;agent_enabled:boolean}>("SELECT master_lock,agent_mode,agent_enabled FROM users WHERE id=$1",[req.userId])).rows[0]!;
   const mode=body.mode??(body.agentEnabled===false?"off":body.agentEnabled===true&&current.agent_mode==="off"?"notify_only":current.agent_mode);
-  // A valid 10–128 character password is required only to enable auto mode or clear either runtime lock.
-  const sensitive=(mode==="auto_inside_policy"&&current.agent_mode!==mode)||(body.masterLock===false&&current.master_lock)||(body.autoExecLock===false&&current.auto_exec_lock);
-  if(sensitive&&!await requirePassword(req,body.password))return fail(res,403,"A valid unlock password is required for this change.");
-  if(mode==="auto_inside_policy"&&body.mode!==undefined){const saved=(await pool.query<{active:boolean;body:unknown}>("SELECT active,body FROM policies WHERE user_id=$1",[req.userId])).rows[0];if(!saved?.active)return fail(res,409,"Sign an active policy before enabling auto mode.");if(policySchema.parse(saved.body).freeze)return fail(res,423,"Emergency freeze active.");}
+  if(body.masterLock===false&&current.master_lock&&!await requirePassword(req,body.password))return fail(res,403,"A valid unlock password is required to clear the master lock.");
   const enabled=body.agentEnabled??(mode!=="off"&&current.agent_enabled);
-  await pool.query("UPDATE users SET agent_enabled=$1,agent_mode=$2,auto_enabled=($2='auto_inside_policy'),master_lock=COALESCE($3,master_lock),auto_exec_lock=COALESCE($4,auto_exec_lock),updated_at=now() WHERE id=$5",[enabled,mode,body.masterLock??null,body.autoExecLock??null,req.userId]);
-  await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({source:"agent-settings",mode,agentEnabled:enabled,masterLock:body.masterLock??current.master_lock,autoExecLock:body.autoExecLock??current.auto_exec_lock})]);
-  const r=(await pool.query("SELECT agent_enabled,agent_mode,master_lock,auto_exec_lock FROM users WHERE id=$1",[req.userId])).rows[0];res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:r.auto_exec_lock});
+  await pool.query("UPDATE users SET agent_enabled=$1,agent_mode=$2,auto_enabled=false,master_lock=COALESCE($3,master_lock),updated_at=now() WHERE id=$4",[enabled,mode,body.masterLock??null,req.userId]);
+  await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({source:"agent-settings",mode,agentEnabled:enabled,masterLock:body.masterLock??current.master_lock})]);
+  const r=(await pool.query("SELECT agent_enabled,agent_mode,master_lock FROM users WHERE id=$1",[req.userId])).rows[0];res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:false});
 }));
 app.post("/api/wallet/challenge",requireSession,asyncRoute(async(req,res)=>{
   const {accountId}=z.object({accountId:z.string().min(2).max(128)}).parse(req.body);
@@ -396,31 +392,6 @@ app.get("/api/portfolio",requireSession,asyncRoute(async (req,res) => {
   if (!account.rows[0]?.account_id) return fail(res,409,"Connect and authenticate a NEAR wallet to view your portfolio.");
   try{const balance=await readNativeNearBalance(account.rows[0].account_id);res.json({accountId:account.rows[0].account_id,balances:[{assetId:"near:native",symbol:"NEAR",amount:balance.available,decimals:24,locked:balance.locked,source:"NEAR RPC",blockHeight:balance.blockHeight}],failures:[]});}
   catch{res.json({accountId:account.rows[0].account_id,balances:[],failures:["NEAR account balance could not be loaded from the RPC."]});}
-}));
-
-app.post("/api/agent/execute",requireSession,asyncRoute(async (req,res) => {
-  const input = z.object({quoteId:z.string().min(1).max(180),password:z.string().min(10).max(128),userInitiated:z.boolean().default(false)}).parse(req.body);
-  if (!await requirePassword(req,input.password)) return fail(res,403,"Unlock with your password before preparing an action.");
-  const runtime=(await pool.query<{master_lock:boolean;agent_mode:string;agent_enabled:boolean;auto_exec_lock:boolean}>("SELECT master_lock,agent_mode,agent_enabled,auto_exec_lock FROM users WHERE id=$1",[req.userId])).rows[0]!;
-  if(runtime.master_lock)return fail(res,423,"Agent is locked.");
-  if(!input.userInitiated&&(!runtime.agent_enabled||runtime.agent_mode==="off"))return fail(res,409,"Agent execution is off.");
-  if(!input.userInitiated&&runtime.agent_mode==="auto_inside_policy"&&runtime.auto_exec_lock)return fail(res,423,"Auto execution is locked.");
-  const stored=await pool.query<{quote:QuoteView}>("SELECT quote FROM live_quotes WHERE user_id=$1 AND quote_id=$2",[req.userId,input.quoteId]);
-  if(!stored.rowCount)return fail(res,404,"Quote is unknown or belongs to another session. Request a new live quote.");
-  const quote=stored.rows[0]!.quote;
-  const {rows}=await pool.query<{body:unknown;active:boolean}>("SELECT body,active FROM policies WHERE user_id=$1",[req.userId]);
-  if(!rows[0]?.active)return fail(res,409,"No active signed policy is available.");
-  const p=policySchema.parse(rows[0].body);
-  if(p.freeze)return fail(res,423,"Emergency freeze active.");
-  const usage=await pool.query<{day_amount:string;week_amount:string}>(`SELECT COALESCE(sum((details->>'amountIn')::numeric) FILTER(WHERE created_at::date=now()::date),0)::text AS day_amount,COALESCE(sum((details->>'amountIn')::numeric) FILTER(WHERE created_at>=date_trunc('week',now())),0)::text AS week_amount FROM execution_events WHERE user_id=$1 AND event_type IN ('submitted','success')`,[req.userId]);
-  const now=new Date(),dayKey=now.toISOString().slice(0,10),weekKey=`${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
-  const usageValue={dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey,weekKey};
-  const d=checkPolicy(p,usageValue,quote,now);
-  if(!d.allowed){await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'blocked',$2)",[req.userId,JSON.stringify({quoteId:quote.id,reason:d.reason})]);return fail(res,403,d.reason);}
-  const result=await teeSigner.signIntent({policy:p,quote,usage:usageValue,intentPayload:quote.raw});
-  if(result.error||!result.signature){await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'failed',$2)",[req.userId,JSON.stringify({quoteId:quote.id,reason:result.error??"TEE returned no signature"})]);return fail(res,503,result.error??"TEE signing failed.");}
-  await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({quoteId:quote.id,signed:true,submitted:false,attestation:result.attestation??null})]);
-  res.status(409).json({error:"TEE signed the intent payload, but this deployment has no supported NEAR Intents submission flow. No funds were moved; review and complete the quote in your wallet.",requiresWalletSignature:true,signed:true,attestation:result.attestation??null});
 }));
 
 app.get("/api/events",requireSession,asyncRoute(async (req,res) => {

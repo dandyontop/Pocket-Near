@@ -123,6 +123,7 @@ export function migrate(): Promise<void> {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS last_error TEXT;
     UPDATE users SET agent_mode=CASE WHEN auto_enabled AND agent_enabled THEN 'auto_inside_policy' WHEN agent_enabled THEN 'notify_only' ELSE 'off' END WHERE agent_mode='off' AND (agent_enabled OR auto_enabled);
+    UPDATE users SET agent_mode='notify_only',auto_enabled=false WHERE agent_mode='auto_inside_policy';
     ALTER TABLE users ENABLE ROW LEVEL SECURITY;
     ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
     ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;

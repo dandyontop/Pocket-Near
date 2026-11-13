@@ -10,14 +10,13 @@ type HomeScreenProps = {
   policy: AgentPolicy | null;
   policyActive: boolean;
   agentOn: boolean;
-  autoOn: boolean;
   busy:boolean;
   onConnect: () => void;
   onDisconnect: () => void;
   onNavigate: (tab: "Watch" | "Swap" | "You") => void;
 };
 
-export function HomeScreen({accountId,nativeBalance,balanceError,policy,policyActive,agentOn,autoOn,busy,onConnect,onDisconnect,onNavigate}:HomeScreenProps){
+export function HomeScreen({accountId,nativeBalance,balanceError,policy,policyActive,agentOn,busy,onConnect,onDisconnect,onNavigate}:HomeScreenProps){
   return <section className="page-title workspace-home">
     <p className="eyebrow">POCKET NEAR</p>
     <h1>{accountId ? "Your pocket at a glance." : "A safer way to move."}</h1>
@@ -29,7 +28,7 @@ export function HomeScreen({accountId,nativeBalance,balanceError,policy,policyAc
       {accountId?<button className="subtle-button home-disconnect" disabled={busy} onClick={onDisconnect}>Disconnect wallet</button>:<button className="secondary-button" disabled={busy} onClick={onConnect}>Connect wallet <ArrowRight size={14}/></button>}
     </article>
     <div className="home-quick-grid">
-      <button className="home-quick-card" onClick={()=>onNavigate("You")}><span className="discover-icon"><Bot size={17}/></span><strong>My Agent</strong><small>{policy?.freeze?"Frozen":agentOn?autoOn?"Auto inside policy":"Notify only":"Off"}</small></button>
+      <button className="home-quick-card" onClick={()=>onNavigate("You")}><span className="discover-icon"><Bot size={17}/></span><strong>My Agent</strong><small>{policy?.freeze?"Frozen":agentOn?"Notify only":"Off"}</small></button>
       <button className="home-quick-card" onClick={()=>onNavigate("Watch")}><span className="discover-icon"><Shield size={17}/></span><strong>Policy pairs</strong><small>{policy&&policyActive?`${policy.allowedPairs.length} signed pair${policy.allowedPairs.length===1?"":"s"}`:"No active signed policy"}</small></button>
     </div>
     <NetworkOverviewCard/>

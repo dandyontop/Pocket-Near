@@ -53,7 +53,7 @@ export const quoteInputSchema = z.object({
 export type QuoteInput = z.infer<typeof quoteInputSchema>;
 
 export interface QuoteView {
-  id: string; provider: "one-click" | "solver-relay" | "cache" | "rhea";
+  id: string; provider: "one-click" | "cache" | "rhea";
   originAsset: string; destinationAsset: string; amountIn: string; amountOut: string;
   amountOutFormatted?: string; minAmountOut?: string; route: string[]; fees: Array<{ asset: string; amount: string; kind: string }>;
   expiresAt: string; slippageBps: number; stale: boolean; depositAddress?: string;
