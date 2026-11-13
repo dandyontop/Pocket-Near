@@ -14,9 +14,10 @@ type FlywheelScreenProps={
   busy:boolean;
   onConnect:()=>void;
   onStake:(amount:string)=>void;
+  showStaking?:boolean;
 };
 
-export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake}:FlywheelScreenProps){
+export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake,showStaking=true}:FlywheelScreenProps){
   const [overview,setOverview]=useState<FlywheelOverview|null>(null);
   const [nearPrice,setNearPrice]=useState<number|null>(null);
   const [loading,setLoading]=useState(true);
@@ -64,7 +65,7 @@ export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake}:
 
   return <section className="page-title flywheel-screen">
     <div className="flywheel-heading">
-      <div><p className="eyebrow">HOURLY ROLLING WINDOW</p><h1>Flywheel</h1></div>
+      <div><p className="eyebrow">HOURLY ROLLING WINDOW</p><h1>NEAR Intents network</h1></div>
       <button className="icon-button light" aria-label="Reload the latest hourly metrics" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={15}/></button>
     </div>
     <p>Real Intents activity and clearly labeled scenarios. The wallet stays in control of every swap.</p>
@@ -84,7 +85,7 @@ export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake}:
         <p className="flywheel-note">This Explorer total covers all integrators. It is not Pocket Near-attributed volume.</p>
       </section>
 
-      <section className="flywheel-card">
+      {showStaking&&<section className="flywheel-card">
         <div className="section-heading compact"><div><p className="eyebrow">RHEA LIQUID STAKING</p><h2>Stake NEAR for rNEAR</h2></div></div>
         <p className="flywheel-note">Rhea’s live rNEAR contract stakes NEAR and returns rNEAR to your wallet. This is native liquid staking—not an rNEAR/USDC pool. The displayed pool market is rNEAR/wNEAR.</p>
         {accountId?<>
@@ -94,7 +95,7 @@ export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake}:
           <button className="primary-button" onClick={()=>onStake(stakeAmount)} disabled={busy||!stakeAmountValid||stakeExceedsBalance||nativeBalance===null}>{busy?<span className="loader small"/>:"Review stake in wallet"}</button>
         </>:<button className="secondary-button" onClick={onConnect} disabled={busy}>Connect NEAR wallet to stake</button>}
         <p className="flywheel-note">Your wallet signs and submits the transaction. Rhea’s official SDK adds a one-time token-registration call when needed. rNEAR output follows Rhea’s live exchange rate; it is not guaranteed to be 1:1.</p>
-      </section>
+      </section>}
 
       <section className="flywheel-card">
         <div className="section-heading compact"><div><p className="eyebrow">POCKET NEAR ATTRIBUTION</p><h2>Routed via Pocket Near (24h)</h2></div></div>

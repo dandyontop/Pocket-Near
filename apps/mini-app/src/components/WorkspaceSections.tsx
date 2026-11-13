@@ -1,37 +1,155 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Bot, Heart, Pause, Play, RefreshCw, Search, Shield, Trash2, TrendingUp, Wallet } from "lucide-react";
-import type { AgentPolicy, Asset, MarketSentiment, MemeBoard, MemeVote, PriceRow } from "@pocket-near/shared";
+import { Activity, ArrowRight, ArrowUpRight, Bot, Check, Clock3, ExternalLink, Heart, Pause, Play, RefreshCw, Search, Shield, ShieldAlert, Trash2, TrendingUp, Wallet } from "lucide-react";
+import type { AgentPolicy, Asset, EarnProtocol, IntentSwap, MarketSentiment, MemeBoard, MemeVote, NetworkOverview, PriceRow } from "@pocket-near/shared";
 import { api } from "../lib/api.js";
 import ThesisFeature from "./ThesisFeature.js";
 import { getRheaMarketRiskFlags } from "../lib/rheaRisk.js";
 
-type HomeShortcutsProps = {
+type HomeScreenProps = {
   accountId: string | null;
   nativeBalance: string | null;
   balanceError: string;
-  policy: AgentPolicy | null;
-  policyActive: boolean;
+  busy: boolean;
+  swaps: IntentSwap[];
+  assets: Asset[];
   agentOn: boolean;
-  busy:boolean;
   onConnect: () => void;
   onDisconnect: () => void;
-  onNavigate: (tab: "MarketPlace" | "Swap" | "You") => void;
+  onSwap: () => void;
+  onActivity: () => void;
 };
 
-export function HomeShortcuts({accountId,nativeBalance,balanceError,policy,policyActive,agentOn,busy,onConnect,onDisconnect,onNavigate}:HomeShortcutsProps){
+export function HomeScreen({accountId,nativeBalance,balanceError,busy,swaps,assets,agentOn,onConnect,onDisconnect,onSwap,onActivity}:HomeScreenProps){
+  const [network,setNetwork]=useState<NetworkOverview|null>(null);
+  const [networkError,setNetworkError]=useState("");
+  const [networkLoading,setNetworkLoading]=useState(true);
+  const refreshNetwork=async()=>{
+    setNetworkLoading(true);
+    setNetworkError("");
+    try{setNetwork(await api.networkOverview());}
+    catch(error){setNetworkError(error instanceof Error?error.message:"Network activity is temporarily unavailable.");}
+    finally{setNetworkLoading(false);}
+  };
+  useEffect(()=>{void refreshNetwork();},[]);
+  const recentSwaps=swaps.slice(0,3);
   return <>
+    <section className="greeting"><div><p className="eyebrow">YOUR WALLET</p><h1>{accountId?"Welcome back.":"Start with your wallet."}</h1></div><div className="secure-pill"><span/> Non-custodial</div></section>
     <article className="home-portfolio">
-      <div className="home-portfolio-head"><span>PORTFOLIO PEEK</span><Wallet size={18}/></div>
-      <strong>{accountId ? nativeBalance !== null ? `${nativeBalance} NEAR` : balanceError || "Loading NEAR balance…" : "Connect a NEAR wallet"}</strong>
+      <div className="home-portfolio-head"><span>NEAR WALLET BALANCE</span><Wallet size={18}/></div>
+      <strong>{accountId ? nativeBalance !== null ? `${nativeBalance} NEAR` : balanceError || "Loading NEAR balance…" : "Connect a wallet to see your balance"}</strong>
       {accountId&&<span className="home-account">{accountId}</span>}
       {accountId?<button className="subtle-button home-disconnect" disabled={busy} onClick={onDisconnect}>Disconnect wallet</button>:<button className="secondary-button" disabled={busy} onClick={onConnect}>Connect wallet <ArrowRight size={14}/></button>}
     </article>
-    <div className="home-quick-grid">
-      <button className="home-quick-card" onClick={()=>onNavigate("You")}><span className="discover-icon"><Bot size={17}/></span><strong>My Agent</strong><small>{policy?.freeze?"Frozen":agentOn?"Notify only":"Off"}</small></button>
-      <button className="home-quick-card" onClick={()=>onNavigate("MarketPlace")}><span className="discover-icon"><Shield size={17}/></span><strong>Policy pairs</strong><small>{policy&&policyActive?`${policy.allowedPairs.length} signed pair${policy.allowedPairs.length===1?"":"s"}`:"No active signed policy"}</small></button>
-    </div>
-    <button className="primary-button" onClick={()=>onNavigate(policy?"MarketPlace":"You")}>{policy?"Review your watch pairs":"Create and sign a policy"} <ArrowRight size={15}/></button>
+    <button className="primary-button home-swap-action" onClick={onSwap}><Activity size={16}/>Swap</button>
+    <section className="home-summary">
+      <div className="section-heading compact"><div><p className="eyebrow">YOUR ACTIVITY</p><h2>Recent swaps</h2></div><button className="secondary-button" onClick={onActivity}>View activity <ArrowRight size={13}/></button></div>
+      {recentSwaps.length?recentSwaps.map(swap=><button className="intent-swap-history-row" key={swap.id} onClick={onActivity}><span>{assets.find(asset=>asset.assetId===swap.quote.originAsset)?.symbol??swap.quote.originAsset} → {assets.find(asset=>asset.assetId===swap.quote.destinationAsset)?.symbol??swap.quote.destinationAsset}</span><strong>{swap.status.replaceAll("_"," ")}</strong></button>):<p className="meme-disclaimer">Your saved Intents swaps will appear here. Start with Swap when you're ready.</p>}
+      <div className="home-agent-status"><Bot size={15}/><span>Agent monitoring</span><strong>{agentOn?"On · notifications only":"Off"}</strong></div>
+    </section>
+    <section className="home-summary home-network-summary">
+      <div className="section-heading compact"><div><p className="eyebrow">NETWORK DATA · ALL INTEGRATORS</p><h2>NEAR Intents (24h)</h2></div><button className="icon-button light" aria-label="Refresh network activity" onClick={()=>void refreshNetwork()} disabled={networkLoading}><RefreshCw size={15}/></button></div>
+      {network?<><div className="flywheel-primary-metrics"><div><span>Network-wide volume</span><strong>{compactUsd(network.volumeUsd24h)}</strong></div><div><span>Transactions</span><strong>{new Intl.NumberFormat("en-US").format(network.txCount24h)}</strong></div><div><span>Success rate</span><strong>{(network.successRate24h*100).toFixed(1)}%</strong></div></div><small>{network.partial?"Partial sample · may not cover full 24 hours":"Explorer network total · not Pocket Near volume"}</small></>:networkError?<div className="execution-status error"><span>{networkError}</span><button className="secondary-button" onClick={()=>void refreshNetwork()} disabled={networkLoading}>Retry</button></div>:<div className="empty-activity"><span className="loader"/><span>Loading network summary…</span></div>}
+    </section>
   </>;
+}
+
+type ActivityScreenProps={
+  swaps:IntentSwap[];
+  selected:IntentSwap|null;
+  assets:Asset[];
+  depositHash:string;
+  statusError:string;
+  busy:boolean;
+  statusBusyId:string;
+  onSelect:(swap:IntentSwap)=>void;
+  onRefreshAll:()=>void;
+  onRefresh:(id:string)=>void;
+  onDepositHashChange:(value:string)=>void;
+  onSendNear:()=>void;
+  onSubmitDepositHash:()=>void;
+};
+
+const terminalSwapStatuses=new Set(["SUCCESS","REFUNDED","FAILED","INCOMPLETE_DEPOSIT"]);
+const swapStepOrder=["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS"];
+const swapStatusLabel=(status:string)=>status==="SUCCESS"?"Complete":status==="REFUNDED"?"Refunded":status==="FAILED"?"Failed":status==="INCOMPLETE_DEPOSIT"?"Incomplete deposit":status.replaceAll("_"," ").toLowerCase().replace(/^\w/,value=>value.toUpperCase());
+
+export function ActivityScreen({swaps,selected,assets,depositHash,statusError,busy,statusBusyId,onSelect,onRefreshAll,onRefresh,onDepositHashChange,onSendNear,onSubmitDepositHash}:ActivityScreenProps){
+  const assetLabel=(assetId:string)=>assets.find(asset=>asset.assetId===assetId)?.symbol??assetId;
+  const selectedStatus=selected?.status??"";
+  const currentStep=selected?(terminalSwapStatuses.has(selectedStatus)?3:swapStepOrder.indexOf(selectedStatus)):-1;
+  const failed=selected&&["REFUNDED","FAILED","INCOMPLETE_DEPOSIT"].includes(selectedStatus);
+  return <section className="page-title activity-screen">
+    <div className="watch-heading"><div><p className="eyebrow">YOUR SWAPS</p><h1>Activity</h1></div><button className="icon-button light" aria-label="Refresh saved swaps" onClick={onRefreshAll}><RefreshCw size={15}/></button></div>
+    <p>Track saved NEAR Intents swaps, deposit steps, and provider status. Rhea pool swaps are submitted directly by your wallet and appear in your wallet activity.</p>
+    {swaps.length===0?<div className="empty-activity"><Activity size={24}/><strong>No saved swaps yet</strong><span>When you prepare a live 1-Click deposit from Swap, it will appear here.</span></div>:<div className="activity-swap-list">{swaps.map(swap=><button className={`intent-swap-history-row ${selected?.id===swap.id?"active":""}`} key={swap.id} onClick={()=>onSelect(swap)}><span>{assetLabel(swap.quote.originAsset)} → {assetLabel(swap.quote.destinationAsset)}<small>{new Date(swap.createdAt).toLocaleString()}</small></span><strong>{swapStatusLabel(swap.status)}</strong></button>)}</div>}
+    {statusError&&!selected&&<div className="execution-status error"><span>{statusError}</span><button className="secondary-button" onClick={onRefreshAll}>Retry</button></div>}
+    {selected&&<section className="intent-swap-panel">
+      <div className="section-heading compact"><div><p className="eyebrow">{assetLabel(selected.quote.originAsset)} → {assetLabel(selected.quote.destinationAsset)}</p><h2>{swapStatusLabel(selected.status)}</h2></div><button className="icon-button light" aria-label="Refresh swap status" onClick={()=>onRefresh(selected.id)} disabled={statusBusyId===selected.id}>{statusBusyId===selected.id?<span className="loader small"/>:<RefreshCw size={15}/>}</button></div>
+      <div className="swap-timeline" aria-label={`Swap status: ${swapStatusLabel(selected.status)}`}>
+        {["Quote created","Deposit detected","Processing","Complete"].map((label,index)=>{
+          const complete=index===0||currentStep>=index||selected.status==="SUCCESS";
+          const active=selected.status==="PENDING_DEPOSIT"?index===1:selected.status==="KNOWN_DEPOSIT_TX"?index===2:selected.status==="PROCESSING"?index===2:false;
+          return <div className={`swap-timeline-step ${complete?"complete":""} ${active?"current":""} ${failed&&index===3?"failed":""}`} key={label}><span>{complete&&(!failed||index<3)?<Check size={12}/>:<span>{index+1}</span>}</span><small>{failed&&index===3?swapStatusLabel(selected.status):label}</small></div>;
+        })}
+      </div>
+      {selected.status==="PENDING_DEPOSIT"&&<div className="activity-next-step">
+        <strong>{selected.originChain==="near"?"Next: send the deposit from your NEAR wallet":"Next: deposit from your external wallet"}</strong>
+        <p>Send exactly {fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)} to the address below{selected.quote.depositMemo?" and include the required memo":""}. Pocket Near cannot send assets on another chain.</p>
+        {selected.originChain==="near"&&<button className="primary-button" onClick={onSendNear} disabled={busy||Boolean(selected.depositTxHash)}>{busy?<span className="loader small"/>:"Send from NEAR wallet"}</button>}
+        {!selected.depositTxHash&&<><label className="field chain-address">Deposit transaction hash<input value={depositHash} onChange={event=>onDepositHashChange(event.target.value)} placeholder="Enter the hash after sending" autoComplete="off"/></label><button className="secondary-button" onClick={onSubmitDepositHash} disabled={busy||!depositHash.trim()}>Notify 1-Click about deposit</button></>}
+      </div>}
+      {["KNOWN_DEPOSIT_TX","PROCESSING"].includes(selected.status)&&<p className="activity-next-step">Deposit received. The provider is processing the swap; refresh status for the latest update.</p>}
+      {selected.status==="SUCCESS"&&<p className="activity-next-step">The provider reports this swap as complete.</p>}
+      {failed&&<p className="activity-next-step warning">{selected.status==="REFUNDED"?"The provider reports a refund. Check the transaction details before retrying.":selected.status==="INCOMPLETE_DEPOSIT"?"The provider marked this deposit incomplete. Review the deposit and memo details.":"The provider reports the swap failed. Review the details before retrying."}</p>}
+      {(statusError||selected.status==="PENDING_DEPOSIT")&&statusError&&<div className="execution-status error"><strong>Status update failed</strong><span>{statusError}</span><button className="secondary-button" onClick={()=>onRefresh(selected.id)}>Retry status refresh</button></div>}
+      <details className="swap-technical-details"><summary>Deposit and transaction details</summary><div className="intent-swap-facts"><span>Deposit amount</span><strong>{fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)}</strong><span>Estimated output</span><strong>{fmtExact(selected.quote.amountOut,assets.find(asset=>asset.assetId===selected.quote.destinationAsset)?.decimals??0)} {assetLabel(selected.quote.destinationAsset)}</strong><span>Deposit address</span><code>{selected.quote.depositAddress??"Not provided"}</code>{selected.quote.depositMemo&&<><span>Required memo</span><code>{selected.quote.depositMemo}</code></>}{selected.depositTxHash&&<><span>Transaction hash</span><code>{selected.depositTxHash}</code></>}</div>{selected.depositTxHash&&selected.originChain==="near"&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(selected.depositTxHash)}`} target="_blank" rel="noreferrer">View NEAR transaction <ExternalLink size={13}/></a>}</details>
+      <small>Quote created {new Date(selected.createdAt).toLocaleString()} · last updated {new Date(selected.updatedAt).toLocaleString()}</small>
+    </section>}
+  </section>;
+}
+
+type EarnScreenProps={
+  protocols:EarnProtocol[];
+  loading:boolean;
+  error:string;
+  onRefresh:()=>void;
+  onDiscover:(type:"earn",id:string,url:string)=>void;
+  accountId:string|null;
+  nativeBalance:string|null;
+  busy:boolean;
+  onConnect:()=>void;
+  onStake:(amount:string)=>void;
+  pools:Array<{id:string;poolId:string;kind:string;symbols:string[];tvlUsd:number;feeBps:number|null;feeApr24hRunRatePct:number|null;volume24hUsd:number|null;poolType:string|null;updatedAt:string;url:string}>;
+  poolSource:string;
+  poolDisclaimer:string;
+  yields:{rnearStakingApy:{valuePct:number|null;observedAt:string|null;basis:string};farmRewardsApr:{basis:string};lendingSupplyApy:{basis:string}}|null;
+  onRefreshPools:()=>void;
+};
+
+export function EarnScreen({protocols,loading,error,onRefresh,onDiscover,accountId,nativeBalance,busy,onConnect,onStake,pools,poolSource,poolDisclaimer,yields,onRefreshPools}:EarnScreenProps){
+  const [stakeAmount,setStakeAmount]=useState("");
+  const [category,setCategory]=useState("");
+  const stakeValid=/^(?:0|[1-9]\d*)(?:\.\d{1,24})?$/.test(stakeAmount)&&(()=>{const [whole="0",fraction=""]=stakeAmount.split(".");return BigInt(whole)*10n**24n+BigInt(fraction.padEnd(24,"0")||"0")>0n;})();
+  const stakeExceedsBalance=stakeValid&&nativeBalance!==null&&Number(stakeAmount)>Number(nativeBalance);
+  const categories=[...new Set(protocols.map(protocol=>protocol.category).filter(Boolean))];
+  return <section className="page-title">
+    <p className="eyebrow">EXPLORE · EARN</p><h1>Earn opportunities</h1><p>Review live listings and supported Rhea routes. Rates and returns can change; nothing here is a guarantee.</p>
+    <section className="flywheel-card">
+      <div className="section-heading compact"><div><p className="eyebrow">RHEA LIQUID STAKING</p><h2>Stake NEAR for rNEAR</h2></div></div>
+      <p className="flywheel-note">Rhea’s live rNEAR contract stakes NEAR and returns rNEAR to your wallet. This is native liquid staking—not an rNEAR/USDC pool. The displayed pool market is rNEAR/wNEAR.</p>
+      {accountId?<><label className="field">NEAR amount<input inputMode="decimal" value={stakeAmount} onChange={event=>setStakeAmount(event.target.value)} placeholder="Amount to stake" aria-label="NEAR amount to stake"/></label><p className="flywheel-note">{nativeBalance===null?"Your wallet balance is unavailable; staking is paused until it can be checked.":`Connected balance: ${nativeBalance} NEAR. Leave extra NEAR for transaction fees and any one-time token registration.`}</p>{stakeExceedsBalance&&<p className="flywheel-note">That amount is higher than the available NEAR balance.</p>}<button className="primary-button" onClick={()=>onStake(stakeAmount)} disabled={busy||!stakeValid||stakeExceedsBalance||nativeBalance===null}>{busy?<span className="loader small"/>:"Review stake in wallet"}</button></>:<button className="secondary-button" onClick={onConnect} disabled={busy}>Connect NEAR wallet to stake</button>}
+      <p className="flywheel-note">Your wallet signs and submits the transaction. Rhea’s official SDK adds a one-time token-registration call when needed. rNEAR output follows Rhea’s live exchange rate; it is not guaranteed to be 1:1.</p>
+      {yields&&<small>Rhea-reported staking APY: {yields.rnearStakingApy.valuePct===null?"unavailable":`${yields.rnearStakingApy.valuePct.toFixed(2)}%`} · observed {yields.rnearStakingApy.observedAt?new Date(yields.rnearStakingApy.observedAt).toLocaleString():"time unavailable"}. {yields.farmRewardsApr.basis} {yields.lendingSupplyApy.basis}</small>}
+    </section>
+    <div className="section-heading compact"><div><p className="eyebrow">NEAR + STABLECOIN POOLS</p><h2>Rhea pool opportunities</h2></div><button className="icon-button light" aria-label="Refresh Rhea pool opportunities" onClick={onRefreshPools}><RefreshCw size={15}/></button></div>
+    {poolDisclaimer&&<p className="investment-disclaimer">{poolDisclaimer} Estimates exclude impermanent loss, depegs and price movement. Not financial advice. Data: {poolSource}.</p>}
+    {pools.length===0?<div className="empty-activity"><TrendingUp size={22}/><strong>Pool data unavailable</strong><span>{poolSource||"Refresh to try again."}</span></div>:<div className="discover-list">{pools.slice(0,12).map(pool=><article className="discover-card" key={pool.id}><div className="discover-top"><div className="discover-icon"><TrendingUp size={17}/></div><span className="rank-badge">{pool.poolType??pool.kind}</span></div><h2>{pool.symbols.join(" / ")}</h2><p>Reported TVL {compactUsd(pool.tvlUsd)} · 24h volume {pool.volume24hUsd===null?"unavailable":compactUsd(pool.volume24hUsd)} · fee {pool.feeBps===null?"unavailable":`${(pool.feeBps/100).toFixed(2)}%`}.</p><div className="discover-meta"><span>{pool.feeApr24hRunRatePct===null?"Pool fee run-rate unavailable":`Backward-looking fee run-rate ${pool.feeApr24hRunRatePct.toFixed(2)}% annualized`}</span><span>Pool #{pool.poolId} · observed {new Date(pool.updatedAt).toLocaleString()}</span></div><a className="secondary-button" href={pool.url} target="_blank" rel="noreferrer">View pool <ArrowUpRight size={14}/></a></article>)}</div>}
+    <div className="section-heading compact"><div><p className="eyebrow">PROTOCOL LISTINGS</p><h2>Earn</h2></div><button className="icon-button light" aria-label="Refresh earn listings" onClick={onRefresh} disabled={loading}><RefreshCw size={15}/></button></div>
+    {loading&&<div className="empty-activity"><span className="loader"/><span>Loading earn listings…</span></div>}
+    {error&&<div className="alert error"><span>{error}</span><button onClick={onRefresh}>Retry</button></div>}
+    <div className="chip-row" aria-label="Earn categories"><button className={!category?"chip active":"chip"} onClick={()=>setCategory("")}>All</button>{categories.map(value=><button key={value} className={category===value?"chip active":"chip"} onClick={()=>setCategory(value)}>{value}</button>)}</div>
+    {protocols.filter(protocol=>!category||protocol.category===category).length===0&&!loading?<div className="empty-activity"><strong>No listings in this category</strong><span>Try another category or refresh.</span></div>:<div className="discover-list">{protocols.filter(protocol=>!category||protocol.category===category).map(protocol=><article className="discover-card" key={protocol.id}><div className="discover-top"><span className="rank-badge">{protocol.category}</span>{protocol.tvl>0&&<span className="rank-badge">TVL {compactUsd(protocol.tvl)}</span>}</div><h2>{protocol.name}</h2><div className="discover-actions"><button className="secondary-button" onClick={()=>onDiscover("earn",protocol.id,protocol.url)}>Explore <ArrowUpRight size={14}/></button></div></article>)}</div>}
+  </section>;
 }
 
 type MarketPlaceScreenProps = {
@@ -39,34 +157,21 @@ type MarketPlaceScreenProps = {
   nativeBalance:string|null;
   nearPrice:number|null;
   assets: Asset[];
-  policy: AgentPolicy | null;
-  policyActive: boolean;
-  agentOn: boolean;
   prices: PriceRow[];
   loading: boolean;
   onRefresh: () => void;
   onSwap: (from: string, to: string) => void;
-  onCreatePolicy: () => void;
   memeBoard: MemeBoard;
   memeBoardError: string;
-  onVoteMeme: (assetId:string,vote:MemeVote)=>void;
+  onVoteMeme:(assetId:string,vote:MemeVote)=>void;
   watchlist:string[];
   onToggleWatch:(symbol:string)=>void;
   onTradePrice:(row:PriceRow)=>void;
-  alerts:Array<{id:number;symbol:string;op:"gte"|"lte";thresholdUsd:number;active:boolean;createdAt:string}>;
-  alertSymbol:string;
-  setAlertSymbol:(value:string)=>void;
-  alertOp:"gte"|"lte";
-  setAlertOp:(value:"gte"|"lte")=>void;
-  alertValue:string;
-  setAlertValue:(value:string)=>void;
-  onCreateAlert:()=>void;
-  onRemoveAlert:(id:number)=>void;
-  onSetAlertActive:(id:number,active:boolean)=>void;
 };
 
 const usd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumSignificantDigits:6}).format(value);
 const compactUsd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:2}).format(value);
+const fmtExact=(amount:string,decimals:number)=>{try{const value=BigInt(amount),base=10n**BigInt(decimals);if(decimals===0)return value.toString();const fraction=(value%base).toString().padStart(decimals,"0").replace(/0+$/g,"");return fraction?`${value/base}.${fraction}`:(value/base).toString();}catch{return amount;}};
 
 function FearGreedMeter(){
   const [sentiment,setSentiment]=useState<MarketSentiment|null>(null);
@@ -85,38 +190,16 @@ function FearGreedMeter(){
   </article>;
 }
 
-export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,policy,policyActive,agentOn,prices,loading,onRefresh,onSwap,onCreatePolicy,memeBoard,memeBoardError,onVoteMeme,watchlist,onToggleWatch,onTradePrice,alerts,alertSymbol,setAlertSymbol,alertOp,setAlertOp,alertValue,setAlertValue,onCreateAlert,onRemoveAlert,onSetAlertActive}:MarketPlaceScreenProps){
+export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,prices,loading,onRefresh,onSwap,memeBoard,memeBoardError,onVoteMeme,watchlist,onToggleWatch,onTradePrice}:MarketPlaceScreenProps){
   const [section,setSection]=useState<"prices"|"memes">("prices");
   const [priceSearch,setPriceSearch]=useState("");
   const [hideRiskFlagged,setHideRiskFlagged]=useState(false);
-  const assetById=new Map(assets.map(asset=>[asset.assetId,asset]));
   const visibleRheaMarkets=memeBoard.assets.filter(asset=>!hideRiskFlagged||getRheaMarketRiskFlags(asset).length===0);
-  const activePairs=policy&&policyActive&&!policy.freeze?policy.allowedPairs:[];
-  const findPrice=(asset:Asset|undefined)=>{
-    if(!asset)return undefined;
-    const symbol=asset.symbol.toUpperCase();
-    const direct=prices.find(price=>price.symbol.toUpperCase()===symbol);
-    if(direct)return direct;
-    return symbol==="WNEAR"?prices.find(price=>price.symbol.toUpperCase()==="NEAR"):undefined;
-  };
   return <section className="page-title">
-    <div className="watch-heading"><div><p className="eyebrow">NEAR MARKETPLACE</p><h1>MarketPlace</h1></div><button className="icon-button light" aria-label="Refresh marketplace data" onClick={onRefresh} disabled={loading}><RefreshCw size={15}/></button></div>
-    <p>Live prices, policy pairs, Rhea markets and sourced market research.</p>
+    <div className="watch-heading"><div><p className="eyebrow">EXPLORE · MARKETS</p><h1>Markets</h1></div><button className="icon-button light" aria-label="Refresh market data" onClick={onRefresh} disabled={loading}><RefreshCw size={15}/></button></div>
+    <p>Live token prices and observable Rhea market data.</p>
     <FearGreedMeter/>
     <ThesisFeature accountId={accountId} nativeBalance={nativeBalance} nearPrice={nearPrice}/>
-    <div className={`policy-status ${!policy||!policyActive||policy.freeze?"blocked":"ok"}`}>{!policy?"No policy":policy.freeze?"Frozen":!policyActive?"No active policy":"Policy active"}{policy&&` · ${agentOn?"Agent monitoring":"Agent paused"}`}</div>
-    {!policy?<article className="coming-soon-card"><strong>Create a signed policy to start watching</strong><span>Watch lists only pairs you explicitly authorize in your policy.</span><button className="secondary-button" onClick={onCreatePolicy}>Set up policy <ArrowRight size={14}/></button></article>:policy.freeze?<article className="coming-soon-card"><strong>Your policy is frozen</strong><span>Unfreeze it in You before resuming pair monitoring.</span><button className="secondary-button" onClick={onCreatePolicy}>Review policy <ArrowRight size={14}/></button></article>:!policyActive?<article className="coming-soon-card"><strong>No active signed policy</strong><span>Sign an active policy in You to resume policy-pair monitoring.</span><button className="secondary-button" onClick={onCreatePolicy}>Review policy <ArrowRight size={14}/></button></article>:activePairs.length===0?<article className="coming-soon-card"><strong>No policy pairs</strong><span>Add and sign an allowed pair to see its price context.</span><button className="secondary-button" onClick={onCreatePolicy}>Add a pair <ArrowRight size={14}/></button></article>:<div className="watch-pair-list">{activePairs.map((pair,index)=>{
-      const from=assetById.get(pair.from),to=assetById.get(pair.to);
-      const fromPrice=findPrice(from),toPrice=findPrice(to);
-      return <article className="watch-pair-card" key={`${pair.from}:${pair.to}:${index}`}>
-        <div className="watch-pair-title"><div><strong>{from?.symbol??pair.from} <span>→</span> {to?.symbol??pair.to}</strong><small>{from?.blockchain??"Asset"} → {to?.blockchain??"Asset"}</small></div><span className="chip active">Policy OK</span></div>
-        <div className="watch-prices">
-          <div><small>{from?.symbol??"Origin"}{from?.symbol.toUpperCase()==="WNEAR"&&fromPrice?.symbol.toUpperCase()==="NEAR"?" · NEAR reference":""}</small><strong>{fromPrice?usd(fromPrice.priceUsd):"Price unavailable"}</strong></div>
-          <div><small>{to?.symbol??"Destination"}{to?.symbol.toUpperCase()==="WNEAR"&&toPrice?.symbol.toUpperCase()==="NEAR"?" · NEAR reference":""}</small><strong>{toPrice?usd(toPrice.priceUsd):"Price unavailable"}</strong></div>
-        </div>
-        <button className="secondary-button" onClick={()=>onSwap(pair.from,pair.to)}>Swap this pair <ArrowRight size={14}/></button>
-      </article>;
-    })}</div>}
     <div className="watch-secondary">
       <div className="watch-segments" role="tablist" aria-label="Watch data"><button role="tab" aria-selected={section==="prices"} className={section==="prices"?"active":""} onClick={()=>setSection("prices")}>Market prices</button><button role="tab" aria-selected={section==="memes"} className={section==="memes"?"active":""} onClick={()=>setSection("memes")}>Rhea NEAR markets</button></div>
       {section==="prices"&&<section className="watch-market-section">
@@ -124,8 +207,6 @@ export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,poli
         {prices.length===0?<div className="empty-activity"><TrendingUp size={24}/><strong>Prices unavailable</strong><span>Market data could not be loaded. Pull to refresh.</span></div>:<div className="market-list">{prices.filter(price=>`${price.name} ${price.symbol}`.toLowerCase().includes(priceSearch.toLowerCase())).map(price=><article className="market-row" key={price.id}><div className="coin-mark">{price.symbol.slice(0,1)}</div><div className="market-name"><strong>{price.name}</strong><span>{price.symbol}{price.marketCap?` · MCap ${compactUsd(price.marketCap)}`:""}</span></div><div className="market-price"><strong>{usd(price.priceUsd)}</strong><span className={(price.change24hPct??0)>=0?"positive":"negative"}>{price.change24hPct===null?"—":`${price.change24hPct>=0?"+":""}${price.change24hPct.toFixed(2)}%`}</span></div><button className={`mini-icon ${watchlist.includes(price.symbol)?"watched":""}`} aria-label={`${watchlist.includes(price.symbol)?"Remove from":"Add to"} watchlist`} onClick={()=>onToggleWatch(price.symbol)}><Heart size={16} fill={watchlist.includes(price.symbol)?"currentColor":"none"}/></button><button className="mini-trade" onClick={()=>onTradePrice(price)}>Trade</button></article>)}</div>}
         <div className="section-heading compact"><div><p className="eyebrow">YOUR WATCHLIST</p><h2>Saved assets</h2></div></div>
         {watchlist.length===0?<div className="empty-activity"><Heart size={20}/><strong>No saved assets</strong><span>Tap the heart beside a price to add it here.</span></div>:<div className="market-list">{watchlist.map(symbol=>{const row=prices.find(price=>price.symbol===symbol);return row?<article className="market-row" key={symbol}><div className="coin-mark">{symbol.slice(0,1)}</div><div className="market-name"><strong>{row.name}</strong><span>{symbol}</span></div><div className="market-price"><strong>{usd(row.priceUsd)}</strong><span className={(row.change24hPct??0)>=0?"positive":"negative"}>{row.change24hPct===null?"—":`${row.change24hPct>=0?"+":""}${row.change24hPct.toFixed(2)}%`}</span></div><button className="mini-icon watched" aria-label={`Remove ${symbol} from watchlist`} onClick={()=>onToggleWatch(symbol)}><Heart size={16} fill="currentColor"/></button></article>:null;})}</div>}
-        <div className="section-heading compact"><div><p className="eyebrow">PRICE ALERTS</p><h2>Create alert</h2></div></div><section className="form-card"><div className="form-grid"><label className="field">Asset<select value={alertSymbol} onChange={event=>setAlertSymbol(event.target.value)}>{prices.map(price=><option key={price.id} value={price.symbol}>{price.symbol}</option>)}</select></label><label className="field">Condition<select value={alertOp} onChange={event=>setAlertOp(event.target.value as "gte"|"lte")}><option value="gte">At or above</option><option value="lte">At or below</option></select></label></div><label className="field">Target USD<input inputMode="decimal" type="number" min="0" step="any" value={alertValue} onChange={event=>setAlertValue(event.target.value)} placeholder="e.g. 100000"/></label><button className="primary-button" disabled={!alertSymbol||!Number(alertValue)} onClick={onCreateAlert}>Create alert</button></section>
-        {alerts.length>0&&<><div className="section-heading compact"><div><p className="eyebrow">YOUR RULES</p><h2>Active alerts</h2></div></div><div className="market-list">{alerts.map(alert=><article className="market-row alert-row" key={alert.id}><div className="market-name"><strong>{alert.symbol} {alert.op==="gte"?"≥":"≤"} {usd(alert.thresholdUsd)}</strong><span>{alert.active?"Alert is active":"Paused"}</span></div><button className="mini-icon" aria-label={alert.active?"Pause alert":"Activate alert"} onClick={()=>onSetAlertActive(alert.id,!alert.active)}>{alert.active?<Pause size={15}/>:<Play size={15}/>}</button><button className="mini-icon" aria-label="Delete alert" onClick={()=>onRemoveAlert(alert.id)}><Trash2 size={15}/></button></article>)}</div></>}
       </section>}
       {section==="memes"&&<section className="watch-market-section">
         <div className="section-heading compact"><div><p className="eyebrow">RHEA DEX · NEAR</p><h2>NEAR token markets</h2></div></div>

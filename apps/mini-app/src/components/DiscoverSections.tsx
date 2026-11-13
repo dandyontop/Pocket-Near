@@ -3,8 +3,8 @@ import { ArrowRight, ArrowUpRight, Bot, RefreshCw, Search, Star } from "lucide-r
 import type { EarnProtocol, ExploreApp, ExploreGame, MarketAgentCard, MarketAgentDetail } from "@pocket-near/shared";
 import { api } from "../lib/api.js";
 
-type DiscoverSection = "explore" | "agents";
 type Props = {
+  mode:"earn"|"apps"|"agents";
   onOpenExternal:(url:string)=>void;
   onDiscover:(type:"app"|"game"|"earn",id:string,url:string)=>void;
   apps:ExploreApp[];
@@ -15,8 +15,7 @@ type Props = {
   onRefreshExplore:()=>void;
 };
 
-export function DiscoverSections({onOpenExternal,onDiscover,apps,earn,games,exploreLoading,exploreError,onRefreshExplore}:Props){
-  const [section,setSection]=useState<DiscoverSection>("explore");
+export function DiscoverSections({mode,onOpenExternal,onDiscover,apps,earn,games,exploreLoading,exploreError,onRefreshExplore}:Props){
   const [agents,setAgents]=useState<MarketAgentCard[]>([]);
   const [agentCategories,setAgentCategories]=useState<string[]>([]);
   const [agentQuery,setAgentQuery]=useState("");
@@ -26,6 +25,7 @@ export function DiscoverSections({onOpenExternal,onDiscover,apps,earn,games,expl
   const [agentLoading,setAgentLoading]=useState(false);
   const [selectedAgent,setSelectedAgent]=useState<MarketAgentDetail|null>(null);
   const [agentDetailLoading,setAgentDetailLoading]=useState("");
+  const [appCategory,setAppCategory]=useState("");
 
   const loadAgents=async(reset=true,query=agentQuery,category=agentCategory)=>{
     setAgentLoading(true);setAgentError("");
@@ -37,7 +37,7 @@ export function DiscoverSections({onOpenExternal,onDiscover,apps,earn,games,expl
     }catch(error){setAgentError(error instanceof Error?error.message:"NEAR Agent Market is temporarily unavailable.");}
     finally{setAgentLoading(false);}
   };
-  useEffect(()=>{if(section==="agents")void loadAgents(true);},[section]);
+  useEffect(()=>{if(mode==="agents")void loadAgents(true);},[mode]);
   const openAgentDetail=async(agent:MarketAgentCard)=>{
     setAgentDetailLoading(agent.id);
     try{setSelectedAgent((await api.marketAgent(agent.id)).agent);}
@@ -46,32 +46,29 @@ export function DiscoverSections({onOpenExternal,onDiscover,apps,earn,games,expl
   };
 
   return <>
-    <section className="page-title"><p className="eyebrow">DISCOVER</p><h1>{section==="explore"?"Explore the ecosystem.":"Discover NEAR agents."}</h1><p>{section==="explore"?"Explore active apps, DeFi and ecosystem links. Quotes remain in Swap.":"Browse NEAR Agent Market listings. Hiring and payment stay on the marketplace."}</p></section>
-    <div className="discover-segments" role="tablist" aria-label="Discover">
-      <button role="tab" aria-selected={section==="explore"} className={section==="explore"?"active":""} onClick={()=>setSection("explore")}>Explore the ecosystem</button>
-      <button role="tab" aria-selected={section==="agents"} className={section==="agents"?"active":""} onClick={()=>setSection("agents")}>Discover NEAR agents</button>
-    </div>
-    {section==="explore"&&<section className="discover-content">
+    <section className="page-title"><p className="eyebrow">EXPLORE</p><h1>{mode==="earn"?"Earn opportunities":mode==="agents"?"NEAR agents":"Apps & games"}</h1><p>{mode==="agents"?"Browse listings from NEAR Agent Market. Hiring and payment stay on the marketplace.":mode==="earn"?"Review current protocol and staking opportunities. Data and returns are not guaranteed.":"Discover ecosystem apps and games from the configured listings."}</p></section>
+    {mode!=="agents"&&<section className="discover-content">
       {exploreLoading&&<div className="empty-activity"><span className="loader"/><strong>Loading ecosystem listings…</strong></div>}
       {exploreError&&<div className="alert error"><span>{exploreError}</span><button onClick={onRefreshExplore}>Retry</button></div>}
-      <div className="section-heading compact"><div><p className="eyebrow">ACTIVE APPS</p><h2>Explore NEAR</h2></div><button className="icon-button light" aria-label="Refresh explore listings" onClick={onRefreshExplore} disabled={exploreLoading}><RefreshCw size={15}/></button></div>
-      {apps.length===0&&!exploreLoading&&!exploreError?<article className="coming-soon-card"><strong>No app listings available</strong><span>Try again when the ecosystem feed is available.</span></article>:<div className="discover-list">{apps.map(app=><article className="discover-card" key={app.id}>
+      {mode==="apps"&&<><div className="section-heading compact"><div><p className="eyebrow">ACTIVE APPS</p><h2>Explore NEAR</h2></div><button className="icon-button light" aria-label="Refresh app and game listings" onClick={onRefreshExplore} disabled={exploreLoading}><RefreshCw size={15}/></button></div>
+      <div className="chip-row" aria-label="App categories"><button className={!appCategory?"chip active":"chip"} onClick={()=>setAppCategory("")}>All</button>{[...new Set(apps.map(app=>app.category))].map(category=><button key={category} className={appCategory===category?"chip active":"chip"} onClick={()=>setAppCategory(category)}>{category}</button>)}</div>
+      {apps.length===0&&!exploreLoading&&!exploreError?<article className="coming-soon-card"><strong>No app listings available</strong><span>Try again when the ecosystem feed is available.</span></article>:apps.filter(app=>!appCategory||app.category===appCategory).length===0?<div className="empty-activity"><strong>No apps in this category</strong><span>Choose another category to view its listings.</span></div>:<div className="discover-list">{apps.filter(app=>!appCategory||app.category===appCategory).map(app=><article className="discover-card" key={app.id}>
         <div className="discover-top"><span className="rank-badge">{app.category}</span>{app.featured&&<span className="rank-badge featured"><Star size={11}/>Featured</span>}</div>
         <h2>{app.name}</h2><p>{app.blurb}</p>
         <div className="discover-actions"><button className="secondary-button" onClick={()=>onDiscover("app",app.id,app.url)}>Explore <ArrowUpRight size={14}/></button></div>
       </article>)}</div>}
-      <div className="section-heading compact"><div><p className="eyebrow">DEFI & EARN</p><h2>Earn opportunities</h2></div></div>
+      <div className="section-heading compact"><div><p className="eyebrow">GAMES</p><h2>Games on NEAR</h2></div></div>
+      {games.length===0&&!exploreLoading&&!exploreError?<article className="coming-soon-card"><strong>No game listings available</strong><span>There are no current games in the feed.</span></article>:<div className="discover-list">{games.map(game=><article className="discover-card" key={game.id}>
+        <div className="discover-top"><span className="rank-badge">Game</span></div><h2>{game.name}</h2><p>{game.blurb}</p>
+        <div className="tag-list">{game.tags.join(" · ")}</div><div className="discover-actions"><button className="secondary-button" onClick={()=>onDiscover("game",game.id,game.url)}>Open <ArrowUpRight size={14}/></button></div>
+      </article>)}</div>}</>}
+      {mode==="earn"&&<><div className="section-heading compact"><div><p className="eyebrow">DEFI & EARN</p><h2>Available opportunities</h2></div><button className="icon-button light" aria-label="Refresh earn listings" onClick={onRefreshExplore} disabled={exploreLoading}><RefreshCw size={15}/></button></div>
       {earn.length===0&&!exploreLoading&&!exploreError?<article className="coming-soon-card"><strong>No earn listings available</strong><span>There are no current opportunities in the feed.</span></article>:<div className="discover-list">{earn.map(protocol=><article className="discover-card" key={protocol.id}>
         <div className="discover-top"><span className="rank-badge">{protocol.category}</span>{protocol.tvl>0&&<span className="rank-badge">TVL ${new Intl.NumberFormat("en-US",{notation:"compact",maximumFractionDigits:1}).format(protocol.tvl)}</span>}</div>
         <h2>{protocol.name}</h2><div className="discover-actions"><button className="secondary-button" onClick={()=>onDiscover("earn",protocol.id,protocol.url)}>Explore <ArrowUpRight size={14}/></button></div>
-      </article>)}</div>}
-      <div className="section-heading compact"><div><p className="eyebrow">GAMES & EXPLORE</p><h2>More from NEAR</h2></div></div>
-      {games.length===0&&!exploreLoading&&!exploreError?<article className="coming-soon-card"><strong>No game listings available</strong><span>There are no current games in the feed.</span></article>:<div className="discover-list">{games.map(game=><article className="discover-card" key={game.id}>
-        <div className="discover-top"><span className="rank-badge">Explore</span></div><h2>{game.name}</h2><p>{game.blurb}</p>
-        <div className="tag-list">{game.tags.join(" · ")}</div><div className="discover-actions"><button className="secondary-button" onClick={()=>onDiscover("game",game.id,game.url)}>Open <ArrowUpRight size={14}/></button></div>
-      </article>)}</div>}
+      </article>)}</div>}</>}
     </section>}
-    {section==="agents"&&<section className="discover-content">
+    {mode==="agents"&&<section className="discover-content">
       <div className="market-toolbar"><label className="field market-search"><Search size={15}/><input value={agentQuery} onChange={event=>setAgentQuery(event.target.value)} placeholder="Search agents" aria-label="Search agents" onKeyDown={event=>{if(event.key==="Enter")void loadAgents(true);}}/></label><button className="icon-button light" aria-label="Search agents" onClick={()=>void loadAgents(true)} disabled={agentLoading}><Search size={15}/></button></div>
       <div className="chip-row"><button className={agentCategory===""?"chip active":"chip"} onClick={()=>{setAgentCategory("");void loadAgents(true,agentQuery,"");}}>All</button>{agentCategories.map(category=><button key={category} className={agentCategory===category?"chip active":"chip"} onClick={()=>{setAgentCategory(category);void loadAgents(true,agentQuery,category);}}>{category}</button>)}</div>
       {agentError&&<div className="alert error"><span>{agentError}</span><button onClick={()=>void loadAgents(true)}>Retry</button></div>}
