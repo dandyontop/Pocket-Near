@@ -63,6 +63,16 @@ export function FlywheelScreen(){
       {overview.partial&&<div className="alert warning"><span>Explorer safety limits were reached. The sample may not cover the full rolling 24 hours.</span></div>}
       {snapshotStale&&<div className="alert warning"><span>This hourly snapshot is over 90 minutes old. The scheduled worker may have failed; shown values are from its last successful run.</span></div>}
       <section className="flywheel-card">
+        <div className="section-heading compact"><div><p className="eyebrow">NETWORK-WIDE CONTEXT</p><h2>NEAR Intents Explorer (24h)</h2></div></div>
+        <div className="flywheel-primary-metrics">
+          <div><span>Network-wide volume</span><strong>{usd(overview.network.volumeUsd24h)}</strong></div>
+          <div><span>Transactions</span><strong>{number(overview.network.txCount24h)}</strong></div>
+          <div><span>Success rate</span><strong>{(overview.network.successRate24h*100).toFixed(1)}%</strong></div>
+        </div>
+        <p className="flywheel-note">This Explorer total covers all integrators. It is not Pocket Near-attributed volume.</p>
+      </section>
+
+      <section className="flywheel-card">
         <div className="section-heading compact"><div><p className="eyebrow">POCKET NEAR ATTRIBUTION</p><h2>Routed via Pocket Near (24h)</h2></div></div>
         <div className="flywheel-primary-metrics">
           <div><span>Successful matched volume</span><strong>{usd(overview.pocketNear.volumeUsd24h)}</strong></div>
@@ -89,16 +99,6 @@ export function FlywheelScreen(){
       </section>
 
       <section className="flywheel-card">
-        <div className="section-heading compact"><div><p className="eyebrow">NETWORK-WIDE CONTEXT</p><h2>NEAR Intents Explorer (24h)</h2></div></div>
-        <div className="flywheel-primary-metrics">
-          <div><span>Network-wide volume</span><strong>{usd(overview.network.volumeUsd24h)}</strong></div>
-          <div><span>Transactions</span><strong>{number(overview.network.txCount24h)}</strong></div>
-          <div><span>Success rate</span><strong>{(overview.network.successRate24h*100).toFixed(1)}%</strong></div>
-        </div>
-        <p className="flywheel-note">This Explorer total covers all integrators. It is not Pocket Near-attributed volume.</p>
-      </section>
-
-      <section className="flywheel-card">
         <div className="section-heading compact"><div><p className="eyebrow">NETWORK-WIDE SCENARIO, NOT OBSERVED DEMAND</p><h2>10× NEAR-demand model</h2></div></div>
         <p className="flywheel-note">Uses the Explorer's network-wide rolling 24-hour volume across all integrators—not just swaps routed through Pocket Near. Multiplies that market baseline by your scale factor and assumed NEAR conversion share. This is a hypothetical market-size scenario, not Pocket Near volume or measured NEAR buying demand.</p>
         <div className="flywheel-assumptions">
@@ -107,13 +107,6 @@ export function FlywheelScreen(){
         </div>
         <p className="flywheel-note">Explorer network baseline: {usd(overview.network.volumeUsd24h)} across {number(overview.network.txCount24h)} transactions in the rolling 24-hour window.{overview.partial?" The Explorer sample is partial, so this baseline may understate the full window.":""}</p>
         {modeledNear!==null?<div className="flywheel-model-output"><span>Illustrative NEAR equivalent</span><strong>{number(modeledNear)} NEAR</strong><small>{compactUsd(overview.network.volumeUsd24h*multiplierValue*(shareValue/100))} modeled USD at {usd(nearPrice!)} per NEAR; assumptions are user-entered.</small></div>:<p className="flywheel-note">{priceNote||"Enter the conversion percentage to calculate this scenario."}</p>}
-      </section>
-
-      <section className="flywheel-card">
-        <div className="section-heading compact"><div><p className="eyebrow">SOFT DATA-QUALITY SIGNAL</p><h2>Repeated-size bursts</h2></div></div>
-        <p className="flywheel-note">{number(overview.pocketNear.signals.repeatedSizeBurstTxCount24h)} successful matched transactions ({usd(overview.pocketNear.signals.repeatedSizeBurstVolumeUsd24h)}) shared an asset pair and USD amount rounded to cents at least three times within five minutes.</p>
-        <p className="flywheel-note">{overview.pocketNear.signals.methodology} This is not a bot/wash classification; zero flags do not prove activity is organic, and flagged volume remains included in the total.</p>
-        <p className="flywheel-note">The available Explorer fields do not establish trader identity, funding links, or net positions, so self-trades, round trips, and wallet clusters are not claimed.</p>
       </section>
 
       <section className="flywheel-card">
