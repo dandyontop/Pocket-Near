@@ -2,6 +2,8 @@
 
 Pocket Near is a non-custodial NEAR wallet companion. Its Mini App includes Flywheel, Watch, Swap, Discover, and Me. Users connect their own NEAR wallet, sign policy and swap transactions themselves, and inspect NEAR and NEAR Intents market data.
 
+See [THESIS.md](./THESIS.md) for the product thesis, evidence on both sides, verification gaps, and rebuild command.
+
 ## Security boundary
 
 Pocket Near never asks for, receives, or stores a wallet private key. Telegram launch data is HMAC-verified, and a normal browser can establish a session only after a NEP-413 wallet signature. Both methods issue a short-lived HttpOnly session cookie. Wallet identity and policy envelopes are verified with NEP-413 signatures. Policy checks are performed by the API and are not an on-chain restriction.
