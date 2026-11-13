@@ -22,6 +22,7 @@ import { checkRheaRouteRegistration, getRheaFrozenTokenSet, getRheaMarkets, getR
 import { getNearStablePools } from "./investmentPools.js";
 import { createThesis, ThesisRateLimitError } from "./thesis.js";
 import { getFlywheelOverview, FlywheelOverviewError } from "./flywheel.js";
+import { createTelegramBot, telegramCommands } from "./telegramBot.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -43,6 +44,21 @@ app.use(cookieParser());
 app.use(express.json({ limit: "64kb", type: "application/json" }));
 app.use("/api",apiRate);
 app.use((_req,_res,next)=>{void migrate().then(()=>next(),next);});
+
+if(process.env.VERCEL&&env.TELEGRAM_WEBHOOK_URL&&env.TELEGRAM_BOT_TOKEN){
+  const bot=createTelegramBot();
+  if(!bot)throw new Error("Telegram bot configuration is inconsistent.");
+  const webhookUrl=new URL(env.TELEGRAM_WEBHOOK_URL);
+  const telegramOptions=env.TELEGRAM_WEBHOOK_SECRET?{secret_token:env.TELEGRAM_WEBHOOK_SECRET}:{};
+  const expressOptions=env.TELEGRAM_WEBHOOK_SECRET?{secretToken:env.TELEGRAM_WEBHOOK_SECRET}:{};
+  app.use(bot.webhookCallback(webhookUrl.pathname,expressOptions));
+  void Promise.all([
+    bot.telegram.setWebhook(env.TELEGRAM_WEBHOOK_URL,telegramOptions),
+    bot.telegram.setMyCommands(telegramCommands),
+  ]).catch(error=>console.error("Telegram webhook initialization failed.",error));
+}else if(process.env.VERCEL&&env.TELEGRAM_WEBHOOK_URL){
+  console.error("Telegram webhook is configured but TELEGRAM_BOT_TOKEN is missing; bot updates cannot be processed.");
+}
 
 function fail(res: Response, status: number, message: string): void { res.status(status).json({ error: message }); }
 function asyncRoute(fn: (req: Request,res: Response,next: NextFunction) => Promise<unknown>) { return (req: Request,res: Response,next: NextFunction) => { void fn(req,res,next).catch(next); }; }

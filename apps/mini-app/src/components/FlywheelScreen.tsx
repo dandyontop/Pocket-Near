@@ -47,7 +47,7 @@ export function FlywheelScreen(){
   const validScenario=overview!==null&&nearPrice!==null&&Number.isFinite(multiplierValue)&&multiplierValue>0
     &&Number.isFinite(shareValue)&&nearShare.trim()!==""&&shareValue>=0&&shareValue<=100;
   const modeledNear=validScenario
-    ? overview.pocketNear.volumeUsd24h*multiplierValue*(shareValue/100)/nearPrice!
+    ? overview.network.volumeUsd24h*multiplierValue*(shareValue/100)/nearPrice!
     : null;
 
   return <section className="page-title flywheel-screen">
@@ -99,13 +99,14 @@ export function FlywheelScreen(){
       </section>
 
       <section className="flywheel-card">
-        <div className="section-heading compact"><div><p className="eyebrow">SCENARIO, NOT OBSERVED DEMAND</p><h2>10× NEAR-demand model</h2></div></div>
-        <p className="flywheel-note">Illustrates a hypothetical scale-up of matched Pocket Near volume. Enter what share you assume converts to NEAR buying demand; no output is shown until you provide that assumption.</p>
+        <div className="section-heading compact"><div><p className="eyebrow">NETWORK-WIDE SCENARIO, NOT OBSERVED DEMAND</p><h2>10× NEAR-demand model</h2></div></div>
+        <p className="flywheel-note">Uses the Explorer's network-wide rolling 24-hour volume across all integrators—not just swaps routed through Pocket Near. Multiplies that market baseline by your scale factor and assumed NEAR conversion share. This is a hypothetical market-size scenario, not Pocket Near volume or measured NEAR buying demand.</p>
         <div className="flywheel-assumptions">
           <label className="field">Volume multiplier<input type="number" min="0.1" step="0.1" value={multiplier} onChange={event=>setMultiplier(event.target.value)}/></label>
           <label className="field">Assumed volume converted to NEAR (%)<input type="number" min="0" max="100" step="1" value={nearShare} onChange={event=>setNearShare(event.target.value)} placeholder="Enter 0–100"/></label>
         </div>
-        {modeledNear!==null?<div className="flywheel-model-output"><span>Illustrative NEAR equivalent</span><strong>{number(modeledNear)} NEAR</strong><small>{compactUsd(overview.pocketNear.volumeUsd24h*multiplierValue*(shareValue/100))} modeled USD at {usd(nearPrice!)} per NEAR; assumptions are user-entered.</small></div>:<p className="flywheel-note">{priceNote||"Enter the conversion percentage to calculate this scenario."}</p>}
+        <p className="flywheel-note">Explorer network baseline: {usd(overview.network.volumeUsd24h)} across {number(overview.network.txCount24h)} transactions in the rolling 24-hour window.{overview.partial?" The Explorer sample is partial, so this baseline may understate the full window.":""}</p>
+        {modeledNear!==null?<div className="flywheel-model-output"><span>Illustrative NEAR equivalent</span><strong>{number(modeledNear)} NEAR</strong><small>{compactUsd(overview.network.volumeUsd24h*multiplierValue*(shareValue/100))} modeled USD at {usd(nearPrice!)} per NEAR; assumptions are user-entered.</small></div>:<p className="flywheel-note">{priceNote||"Enter the conversion percentage to calculate this scenario."}</p>}
       </section>
 
       <section className="flywheel-card">
