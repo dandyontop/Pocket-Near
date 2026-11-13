@@ -130,6 +130,34 @@ export const networkOverviewSchema=z.object({
 });
 export type NetworkOverview=z.infer<typeof networkOverviewSchema>;
 
+export const thesisFactsSchema=z.object({
+  capturedAt:z.string().datetime(),
+  market:z.object({
+    asset:z.literal("NEAR"),priceUsd:z.number().nonnegative().finite().nullable(),change24hPct:z.number().finite().nullable(),
+    source:z.string().nullable(),updatedAt:z.string().datetime().nullable(),
+  }),
+  intents24h:z.object({
+    volumeUsd24h:z.number().nonnegative().finite(),txCount24h:z.number().int().nonnegative(),
+    successRate24h:z.number().min(0).max(1).finite(),windowStart:z.string().datetime(),windowEnd:z.string().datetime(),
+    partial:z.boolean(),source:z.string(),updatedAt:z.string().datetime(),methodology:z.string(),
+  }).nullable(),
+  unavailable:z.array(z.string()),
+});
+export type ThesisFacts=z.infer<typeof thesisFactsSchema>;
+export const thesisContentSchema=z.object({
+  summary:z.string().min(1).max(700),
+  bull:z.array(z.string().min(1).max(280)).min(1).max(5),
+  bear:z.array(z.string().min(1).max(280)).min(1).max(5),
+  risks:z.array(z.string().min(1).max(280)).min(1).max(5),
+  whatToVerify:z.array(z.string().min(1).max(280)).min(1).max(5),
+}).strict();
+export type ThesisContent=z.infer<typeof thesisContentSchema>;
+export const thesisReportSchema=thesisContentSchema.extend({
+  facts:thesisFactsSchema,source:z.enum(["near-ai-cloud","rules-fallback"]),
+  generatedAt:z.string().datetime(),note:z.string().max(240).optional(),
+});
+export type ThesisReport=z.infer<typeof thesisReportSchema>;
+
 export const curatedExploreApps: ExploreApp[] = [
   {id:"ref-finance",name:"Rhea Finance",slug:"rhea-finance",category:"DeFi",blurb:"NEAR decentralized exchange and liquidity markets.",url:"https://rhea.finance",featured:true},
   {id:"burrow",name:"Burrow",slug:"burrow",category:"DeFi",blurb:"Lending and borrowing markets on NEAR.",url:"https://app.burrow.finance",featured:true},

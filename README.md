@@ -25,6 +25,14 @@ The five personal tabs share one authenticated Mini App session. Watch shows all
 
 The normal browser landing page provides public read-only Intents overview, prices, Earn, and Explore data without a login. Personal wallet features require wallet sign-in; the wallet remains responsible for approving and submitting transactions. Background alerts and agent notifications require an account linked to Telegram.
 
+## NEAR research thesis
+
+The authenticated **My Agent** card and Telegram `/thesis` command can request `POST /api/thesis`. The server builds a facts-only snapshot from CoinGecko's NEAR price and the Explorer's rolling 24-hour Intents metrics, then asks NEAR AI Cloud's OpenAI-compatible chat-completions API for a JSON thesis (`summary`, `bull`, `bear`, `risks`, and `whatToVerify`). The response is validated with shared Zod schemas. Network-wide Intents volume is explicitly not attributed to Pocket Near.
+
+Set `NEARAI_API_KEY` only in the API server environment; it is never sent to or bundled with the Mini App. The feature uses `z-ai/glm-5.3-flash`, caches a successful result per user for 15 minutes, and allows at most three model requests per user per 15 minutes. If the key is missing or the model request/response fails, the API returns a clearly labeled `rules-fallback` based only on the available source data. The fixed UI disclaimer says, “Not financial advice. Do your own research.”
+
+NEAR AI Cloud documents its inference as TEE-based. Pocket Near does not verify or claim model attestation, and AI output has no authority over wallet signing, policy decisions, or transaction submission. No wallet data or private keys are sent to the model.
+
 ## Intents network overview
 
 The Home card reads `GET /api/network/overview`, a public aggregate from the authenticated NEAR Intents Explorer transactions endpoint. Set `EXPLORER_JWT` only in the API server environment; it is never sent to or bundled with the Mini App. The server applies Explorer's transaction timestamp filters and computes volume from `amountInUsd`, transaction/status counts, `SUCCESS / txCount` as a 0–1 success rate, and the highest-volume pairs and assets for a rolling 24-hour window. The response includes the exact ISO `windowStart` / `windowEnd`, aggregation time, and methodology string.
@@ -126,6 +134,7 @@ Vercel functions are not persistent workers. Keep `AGENT_WORKER_ENABLED=false`; 
 | `ONE_CLICK_JWT` | Server-side NEAR Intents partner JWT required for executable quotes, deposit notifications, and status refresh; dry previews may work without it; never send it to the browser |
 | `ONE_CLICK_BASE_URL` | 1Click API base URL |
 | `EXPLORER_JWT` | Required server-only bearer JWT for NEAR Intents Explorer network metrics; never expose to the Mini App |
+| `NEARAI_API_KEY` | Optional server-only key for NEAR AI Cloud thesis generation; never expose to the Mini App |
 
 | `NEAR_RPC_URL` | NEAR RPC endpoint used to validate wallet signatures |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed by CORS |

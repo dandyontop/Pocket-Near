@@ -68,6 +68,14 @@ export function migrate(): Promise<void> {
     ALTER TABLE intent_swaps ALTER COLUMN preview_quote_id SET NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS intent_swaps_user_preview_quote_idx ON intent_swaps(user_id,preview_quote_id);
     CREATE INDEX IF NOT EXISTS intent_swaps_user_created_idx ON intent_swaps(user_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS thesis_cache (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      report JSONB NOT NULL, cached_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS thesis_rate_limits (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      window_started_at TIMESTAMPTZ NOT NULL, request_count INTEGER NOT NULL CHECK(request_count>=0)
+    );
     CREATE TABLE IF NOT EXISTS execution_events (
       id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       event_type TEXT NOT NULL CHECK (event_type IN ('blocked','preview','submitted','success','failed')),
@@ -156,6 +164,8 @@ export function migrate(): Promise<void> {
     ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE live_quotes ENABLE ROW LEVEL SECURITY;
     ALTER TABLE intent_swaps ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE thesis_cache ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE thesis_rate_limits ENABLE ROW LEVEL SECURITY;
     ALTER TABLE execution_events ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_watchlist ENABLE ROW LEVEL SECURITY;
     ALTER TABLE price_alerts ENABLE ROW LEVEL SECURITY;

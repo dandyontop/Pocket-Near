@@ -11,6 +11,7 @@ const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().default(""), TELEGRAM_WEBHOOK_SECRET: z.string().default(""), TELEGRAM_WEBHOOK_URL:z.preprocess(v=>v===""?undefined:v,z.string().url().optional()),
   CRON_SECRET: z.string().default(""),
   ONE_CLICK_JWT: z.string().default(""), ONE_CLICK_BASE_URL: z.string().url().default("https://1click.chaindefuser.com"),
+  NEARAI_API_KEY: z.string().default(""),
   EXPLORER_JWT: z.string().default(""),
   NEAR_RPC_URL: z.string().url().default("https://rpc.mainnet.near.org"),
   ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),

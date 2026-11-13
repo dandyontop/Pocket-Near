@@ -20,6 +20,7 @@ import { getRheaPositions, getRNearYield } from "./rheaPositions.js";
 import { runScheduledWorker } from "./scheduledWorker.js";
 import { checkRheaRouteRegistration, getRheaFrozenTokenSet, getRheaMarkets, getRheaSwapQuote } from "./rheaMarkets.js";
 import { getNearStablePools } from "./investmentPools.js";
+import { createThesis, ThesisRateLimitError } from "./thesis.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
 const app: Express = express();
@@ -122,6 +123,17 @@ app.get("/api/network/overview",asyncRoute(async(_req,res)=>{
     res.json(data);
   }catch(error){
     if(error instanceof NetworkOverviewError)return fail(res,error.status,error.message);
+    throw error;
+  }
+}));
+
+app.post("/api/thesis",requireSession,asyncRoute(async(req,res)=>{
+  try{
+    const report=await createThesis(req.userId!);
+    res.setHeader("Cache-Control","no-store");
+    res.json(report);
+  }catch(error){
+    if(error instanceof ThesisRateLimitError)return fail(res,429,error.message);
     throw error;
   }
 }));
