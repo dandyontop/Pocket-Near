@@ -1,0 +1,17 @@
+.public-welcome{padding:10px 0 4px}
+.public-welcome h1{max-width:440px;margin:0;font:600 29px 'Space Grotesk';letter-spacing:-.055em;line-height:1.08}
+.public-welcome>p:not(.eyebrow):not(.public-login-error){color:#78857b;font-size:12px;line-height:1.6;margin:11px 0 14px}
+.public-welcome .primary-button{margin-top:12px}
+.public-login-error{padding:10px;border:1px solid #f1d6d1;border-radius:10px;background:#fff2ef;color:#a94b3b;font-size:11px;line-height:1.5}
+.public-section-heading{margin:27px 0 12px;display:flex;align-items:center;justify-content:space-between}
+.public-section-heading h2{margin:0;font:600 18px 'Space Grotesk';letter-spacing:-.04em}
+.public-data-card{margin:10px 0;padding:14px;border:1px solid #e8ece6;border-radius:16px;background:#fff}
+.public-data-card h3{margin:0 0 10px;font:600 13px 'Space Grotesk'}
+.public-data-row{min-height:43px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #eef1ec;color:var(--ink);text-decoration:none}
+.public-data-row>span{display:grid;gap:3px;min-width:0}
+.public-data-row strong{font-size:11px}
+.public-data-row small{color:#87938a;font-size:9px}
+.public-data-row>b{display:flex;align-items:center;gap:4px;flex-shrink:0;font-size:10px;font-weight:600}
+.public-data-message,.public-data-error{font-size:10px;line-height:1.5;color:#829087}
+.public-data-error{color:#a94b3b}
+.public-retry{width:100%;justify-content:center;margin-top:8px}

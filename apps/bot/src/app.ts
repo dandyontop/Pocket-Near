@@ -9,7 +9,7 @@ import { z } from "zod";
 import { canonicalPolicy, checkPolicy, policySchema, quoteInputSchema, type QuoteView } from "@pocket-near/shared";
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
-import { makePasswordHash, makeSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
+import { makePasswordHash, makeSession, makeUserSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
 import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
 import { fetchLiveQuote, QuoteProviderError, QuoteRequestError } from "./quotes.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
@@ -32,8 +32,6 @@ const origins = new Set([
 ]);
 const loginRate = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: "draft-8", legacyHeaders: false });
 const apiRate = rateLimit({ windowMs: 60_000, limit: 90, standardHeaders: "draft-8", legacyHeaders: false });
-const challenges = new Map<number,string>();
-const walletChallenges = new Map<number,{nonce:string;message:string}>();
 
 app.disable("x-powered-by");
 app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc:["'self'"],scriptSrc:["'self'","https://telegram.org"],styleSrc:["'self'","'unsafe-inline'","https://fonts.googleapis.com"],fontSrc:["'self'","data:","https://fonts.gstatic.com"],imgSrc:["'self'","data:","https:"],connectSrc:["'self'",...origins,"https://1click.chaindefuser.com","https://rpc.mainnet.near.org"] } } }));
@@ -52,13 +50,20 @@ function cookie(res: Response, token: string) { res.cookie(cookieName,token,{ ht
 const requireSession = asyncRoute(async (req,res,next) => {
   try {
     const token = req.cookies?.[cookieName] as string | undefined;
-    const telegramId = token ? await readSession(token) : undefined;
-    if (!telegramId) return fail(res,401,"Open Pocket Near from its Telegram Mini App button.");
-    req.telegramId = telegramId;
-    const user = await pool.query<{id:string}>("INSERT INTO users(telegram_id) VALUES($1) ON CONFLICT(telegram_id) DO UPDATE SET updated_at=now() RETURNING id",[telegramId]);
-    req.userId = Number(user.rows[0]!.id);
+    if (!token) return fail(res,401,"Connect your wallet or sign in from Telegram.");
+    const identity = await readSession(token);
+    if ("telegramId" in identity) {
+      req.telegramId = identity.telegramId;
+      const user = await pool.query<{id:string}>("INSERT INTO users(telegram_id) VALUES($1) ON CONFLICT(telegram_id) DO UPDATE SET updated_at=now() RETURNING id",[identity.telegramId]);
+      req.userId = Number(user.rows[0]!.id);
+    } else {
+      const user = await pool.query<{id:string;telegram_id:string|null}>("SELECT id,telegram_id FROM users WHERE id=$1",[identity.userId]);
+      if (!user.rowCount) return fail(res,401,"Wallet session expired. Connect your wallet again.");
+      req.userId = Number(user.rows[0]!.id);
+      if(user.rows[0]!.telegram_id)req.telegramId=Number(user.rows[0]!.telegram_id);
+    }
     next();
-  } catch { fail(res,401,"Session expired. Reopen the Mini App from Telegram."); }
+  } catch { fail(res,401,"Session expired. Connect your wallet or sign in from Telegram."); }
 });
 
 app.get("/api/worker/tick",asyncRoute(async(req,res)=>{
@@ -76,6 +81,7 @@ app.get("/api/investments/preferences",requireSession,asyncRoute(async(req,res)=
 }));
 app.put("/api/investments/preferences",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({alertsEnabled:z.boolean(),symbols:z.array(z.enum(["NEAR","USDC","USDT"])).max(3),positionMonitoring:z.boolean(),reportFrequency:z.number().int().min(1).max(4)}).parse(req.body);
+  if((body.alertsEnabled||body.positionMonitoring)&&!req.telegramId)return fail(res,409,"Telegram sign-in is required for background notifications.");
   const symbols=[...new Set(body.symbols)];
   if(body.alertsEnabled&&!symbols.length)return fail(res,400,"Choose at least one token for investment alerts.");
   const current=(await pool.query<{report_frequency:number;position_monitoring:boolean}>("SELECT report_frequency,position_monitoring FROM investment_preferences WHERE user_id=$1",[req.userId])).rows[0];
@@ -101,13 +107,13 @@ app.get("/api/positions",requireSession,asyncRoute(async(req,res)=>{
   res.json({...result,coverage:"Rhea internal token deposits and rNEAR liquid staking are tracked. Rhea farm-staked positions and concentrated-liquidity NFT positions are not currently included. rNEAR unlock time is unavailable when the contract view does not expose an estimate."});
 }));
 
-app.get("/api/prices",requireSession,asyncRoute(async(_req,res)=>{
-  const data=await getPrices();res.setHeader("Cache-Control","private, max-age=30");res.json(data);
+app.get("/api/prices",asyncRoute(async(_req,res)=>{
+  const data=await getPrices();res.setHeader("Cache-Control","public, max-age=30");res.json(data);
 }));
-app.get("/api/network/overview",requireSession,asyncRoute(async(_req,res)=>{
+app.get("/api/network/overview",asyncRoute(async(_req,res)=>{
   try{
     const data=await getNetworkOverview();
-    res.setHeader("Cache-Control","private, max-age=300");
+    res.setHeader("Cache-Control","public, max-age=300");
     res.json(data);
   }catch(error){
     if(error instanceof NetworkOverviewError)return fail(res,error.status,error.message);
@@ -129,26 +135,28 @@ app.get("/api/prices/alerts",requireSession,asyncRoute(async(req,res)=>{
 }));
 app.post("/api/prices/alerts",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({symbol:z.string().min(1).max(24),op:z.enum(["gte","lte"]),thresholdUsd:z.number().positive().finite()}).parse(req.body);
+  if(!req.telegramId)return fail(res,409,"Telegram sign-in is required for background price-alert notifications.");
   const symbol=body.symbol.toUpperCase();const market=await getPrices();if(!market.rows.some(p=>p.symbol===symbol))return fail(res,400,"Choose a symbol from the current price list.");
   const {rows}=await pool.query("INSERT INTO price_alerts(user_id,symbol,op,threshold_usd) VALUES($1,$2,$3,$4) RETURNING id,symbol,op,threshold_usd::float8 AS \"thresholdUsd\",active,created_at AS \"createdAt\"",[req.userId,symbol,body.op,body.thresholdUsd]);res.status(201).json({alert:rows[0]});
 }));
 app.patch("/api/prices/alerts/:id",requireSession,asyncRoute(async(req,res)=>{
   const id=z.coerce.number().int().positive().parse(req.params.id);const {active}=z.object({active:z.boolean()}).parse(req.body);
+  if(active&&!req.telegramId)return fail(res,409,"Telegram sign-in is required for background price-alert notifications.");
   const {rows}=await pool.query("UPDATE price_alerts SET active=$1,last_fired_at=CASE WHEN $1 THEN last_fired_at ELSE NULL END WHERE id=$2 AND user_id=$3 RETURNING id,symbol,op,threshold_usd::float8 AS \"thresholdUsd\",active,created_at AS \"createdAt\"",[active,id,req.userId]);if(!rows.length)return fail(res,404,"Price alert was not found.");res.json({alert:rows[0]});
 }));
 app.delete("/api/prices/alerts/:id",requireSession,asyncRoute(async(req,res)=>{
   const id=z.coerce.number().int().positive().parse(req.params.id);const result=await pool.query("DELETE FROM price_alerts WHERE id=$1 AND user_id=$2",[id,req.userId]);if(!result.rowCount)return fail(res,404,"Price alert was not found.");res.status(204).end();
 }));
-app.get("/api/earn",requireSession,asyncRoute(async(req,res)=>{
+app.get("/api/earn",asyncRoute(async(req,res)=>{
   const data=await getEarn();const category=typeof req.query.category==="string"?req.query.category:undefined;const minTvl=Number(req.query.minTvl??0);const sort=req.query.sort==="change1d"?"change1d":req.query.sort==="change7d"?"change7d":"tvl";
-  const protocols=data.protocols.filter(p=>(!category||p.category.toLowerCase()===category.toLowerCase())&&p.tvl>=Math.max(0,minTvl)).sort((a,b)=>sort==="tvl"?b.tvl-a.tvl:(b[sort]??-Infinity)-(a[sort]??-Infinity));res.json({...data,protocols});
+  const protocols=data.protocols.filter(p=>(!category||p.category.toLowerCase()===category.toLowerCase())&&p.tvl>=Math.max(0,minTvl)).sort((a,b)=>sort==="tvl"?b.tvl-a.tvl:(b[sort]??-Infinity)-(a[sort]??-Infinity));res.setHeader("Cache-Control","public, max-age=300");res.json({...data,protocols});
 }));
-app.get("/api/explore/apps",requireSession,asyncRoute(async(req,res)=>{
+app.get("/api/explore/apps",asyncRoute(async(req,res)=>{
   const category=typeof req.query.category==="string"?req.query.category:undefined;const search=typeof req.query.search==="string"?req.query.search.toLowerCase().slice(0,80):"";const sort=req.query.sort==="name"?"name":req.query.sort==="featured"?"featured":"tvl";
   const {protocols}=await getEarn();const mapped=getCuratedApps().map(app=>{const protocol=protocols.find(p=>p.name.toLowerCase()===app.name.toLowerCase()||p.id===app.slug);return {...app,...(protocol?{tvl:protocol.tvl}:{})};});
-  const apps=mapped.filter(a=>(!category||a.category===category)&&(!search||`${a.name} ${a.blurb} ${a.category}`.toLowerCase().includes(search))).sort((a,b)=>sort==="name"?a.name.localeCompare(b.name):sort==="featured"?Number(b.featured)-Number(a.featured)||((b.tvl??0)-(a.tvl??0)):((b.tvl??0)-(a.tvl??0))||Number(b.featured)-Number(a.featured));res.json({apps,source:"curated+DefiLlama"});
+  const apps=mapped.filter(a=>(!category||a.category===category)&&(!search||`${a.name} ${a.blurb} ${a.category}`.toLowerCase().includes(search))).sort((a,b)=>sort==="name"?a.name.localeCompare(b.name):sort==="featured"?Number(b.featured)-Number(a.featured)||((b.tvl??0)-(a.tvl??0)):((b.tvl??0)-(a.tvl??0))||Number(b.featured)-Number(a.featured));res.setHeader("Cache-Control","public, max-age=300");res.json({apps,source:"curated+DefiLlama"});
 }));
-app.get("/api/explore/games",requireSession,(_req,res)=>res.json({games:getCuratedGames(),source:"curated"}));
+app.get("/api/explore/games",(_req,res)=>{res.setHeader("Cache-Control","public, max-age=3600");res.json({games:getCuratedGames(),source:"curated"});});
 app.post("/api/discover/events",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({itemType:z.enum(["app","game","earn"]),itemId:z.string().min(1).max(120)}).parse(req.body);await pool.query("INSERT INTO discover_events(user_id,item_type,item_id,action) VALUES($1,$2,$3,'open')",[req.userId,body.itemType,body.itemId]);res.status(201).json({recorded:true});
 }));
@@ -228,28 +236,49 @@ app.put("/api/agent/settings",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({agentEnabled:z.boolean().optional(),mode:z.enum(["off","notify_only"]).optional(),masterLock:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.mode!==undefined||v.masterLock!==undefined).parse(req.body);
   const current=(await pool.query<{master_lock:boolean;agent_mode:string;agent_enabled:boolean}>("SELECT master_lock,agent_mode,agent_enabled FROM users WHERE id=$1",[req.userId])).rows[0]!;
   const mode=body.mode??(body.agentEnabled===false?"off":body.agentEnabled===true&&current.agent_mode==="off"?"notify_only":current.agent_mode);
+  if(mode!=="off"&&!req.telegramId)return fail(res,409,"Telegram sign-in is required for background agent notifications.");
   if(body.masterLock===false&&current.master_lock&&!await requirePassword(req,body.password))return fail(res,403,"A valid unlock password is required to clear the master lock.");
   const enabled=body.agentEnabled??(mode!=="off"&&current.agent_enabled);
   await pool.query("UPDATE users SET agent_enabled=$1,agent_mode=$2,auto_enabled=false,master_lock=COALESCE($3,master_lock),updated_at=now() WHERE id=$4",[enabled,mode,body.masterLock??null,req.userId]);
   await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[req.userId,JSON.stringify({source:"agent-settings",mode,agentEnabled:enabled,masterLock:body.masterLock??current.master_lock})]);
   const r=(await pool.query("SELECT agent_enabled,agent_mode,master_lock FROM users WHERE id=$1",[req.userId])).rows[0];res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:false});
 }));
-app.post("/api/wallet/challenge",requireSession,asyncRoute(async(req,res)=>{
+app.post("/api/wallet/challenge",loginRate,asyncRoute(async(req,res)=>{
   const {accountId}=z.object({accountId:z.string().min(2).max(128)}).parse(req.body);
   const nonce=Buffer.from(newNonce()).toString("base64");
-  const message=`Pocket Near wallet connection\nTelegram user: ${req.telegramId}\nAccount: ${accountId}\nNonce: ${nonce}`;
-  walletChallenges.set(req.telegramId!,{nonce,message});
-  setTimeout(()=>walletChallenges.delete(req.telegramId!),5*60_000).unref();
+  const message=`Pocket Near wallet sign-in\nAccount: ${accountId}\nNonce: ${nonce}`;
+  await pool.query("DELETE FROM wallet_login_challenges WHERE expires_at<=now()");
+  await pool.query("INSERT INTO wallet_login_challenges(nonce,account_id,message,expires_at) VALUES($1,$2,$3,now()+interval '5 minutes')",[nonce,accountId,message]);
   res.json({nonce,message,recipient:"Pocket Near"});
 }));
-app.post("/api/wallet/verify",requireSession,asyncRoute(async(req,res)=>{
-  const envelope=z.object({accountId:z.string(),publicKey:z.string(),signature:z.string(),payload:z.object({message:z.string(),recipient:z.string(),nonce:z.string()})}).parse(req.body);
-  const challenge=walletChallenges.get(req.telegramId!);
-  if(!challenge||challenge.nonce!==envelope.payload.nonce||challenge.message!==envelope.payload.message||envelope.payload.recipient!=="Pocket Near")return fail(res,403,"Wallet proof is invalid or expired.");
+app.post("/api/wallet/verify",loginRate,asyncRoute(async(req,res)=>{
+  const envelope=z.object({accountId:z.string().min(2).max(128),publicKey:z.string().min(1).max(128),signature:z.string().min(1).max(256),payload:z.object({message:z.string().max(2048),recipient:z.string().max(128),nonce:z.string().min(1).max(128)})}).parse(req.body);
+  const challenge=await pool.query<{message:string}>("SELECT message FROM wallet_login_challenges WHERE nonce=$1 AND account_id=$2 AND expires_at>now()",[envelope.payload.nonce,envelope.accountId]);
+  if(!challenge.rowCount||challenge.rows[0]!.message!==envelope.payload.message||envelope.payload.recipient!=="Pocket Near")return fail(res,403,"Wallet proof is invalid or expired.");
   try{await verifyPolicySignature(envelope);}catch{return fail(res,403,"Wallet signature could not be verified.");}
-  walletChallenges.delete(req.telegramId!);
-  await pool.query("UPDATE users SET account_id=$1,updated_at=now() WHERE id=$2",[envelope.accountId,req.userId]);
-  res.json({accountId:envelope.accountId});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const consumed=await client.query("DELETE FROM wallet_login_challenges WHERE nonce=$1 AND account_id=$2 AND message=$3 AND expires_at>now() RETURNING nonce",[envelope.payload.nonce,envelope.accountId,envelope.payload.message]);
+    if(!consumed.rowCount){
+      await client.query("ROLLBACK");
+      return fail(res,403,"Wallet proof is invalid or expired.");
+    }
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[envelope.accountId]);
+    const existing=await client.query<{id:string}>("SELECT id FROM users WHERE account_id=$1 ORDER BY id LIMIT 1 FOR UPDATE",[envelope.accountId]);
+    const user=existing.rowCount
+      ? await client.query<{id:string}>("UPDATE users SET updated_at=now() WHERE id=$1 RETURNING id",[existing.rows[0]!.id])
+      : await client.query<{id:string}>("INSERT INTO users(telegram_id,account_id) VALUES(NULL,$1) RETURNING id",[envelope.accountId]);
+    const userId=Number(user.rows[0]!.id);
+    if(!Number.isSafeInteger(userId)||userId<=0)throw new Error("Wallet account could not be loaded.");
+    const session=await makeUserSession(userId);
+    await client.query("COMMIT");
+    cookie(res,session);
+    res.json({accountId:envelope.accountId});
+  }catch(error){
+    await client.query("ROLLBACK");
+    throw error;
+  }finally{client.release();}
 }));
 
 app.post("/api/security/password",requireSession,asyncRoute(async (req,res) => {
@@ -275,8 +304,7 @@ app.post("/api/policy/challenge",requireSession,asyncRoute(async (req,res) => {
   const nonce = newNonce();
   const nonceBase64 = Buffer.from(nonce).toString("base64");
   const message = `Pocket Near policy authorization\nAccount: ${accountId}\nNonce: ${nonceBase64}`;
-  challenges.set(req.telegramId!,nonceBase64);
-  setTimeout(() => { if(challenges.get(req.telegramId!)===nonceBase64) challenges.delete(req.telegramId!); },5*60_000).unref();
+  await pool.query("INSERT INTO policy_signing_challenges(user_id,nonce,expires_at) VALUES($1,$2,now()+interval '5 minutes') ON CONFLICT(user_id) DO UPDATE SET nonce=EXCLUDED.nonce,expires_at=EXCLUDED.expires_at",[req.userId,nonceBase64]);
   res.json({message,recipient:"Pocket Near",nonce:nonceBase64});
 }));
 app.put("/api/policy",requireSession,asyncRoute(async (req,res) => {
@@ -285,14 +313,21 @@ app.put("/api/policy",requireSession,asyncRoute(async (req,res) => {
   if (!await requirePassword(req)) return fail(res,403,"Unlock with your password before changing the policy.");
   const {policy,envelope} = parsed.data;
   if (policy.accountId !== envelope.accountId || policy.accountId !== (await pool.query("SELECT account_id FROM users WHERE id=$1",[req.userId])).rows[0]?.account_id) return fail(res,403,"Policy account does not match the connected wallet.");
-  if (challenges.get(req.telegramId!) !== envelope.payload.nonce) return fail(res,403,"Policy signing challenge is missing, expired, or already used.");
   const canonical = canonicalPolicy(policy);
   const expected = `Pocket Near policy authorization\nAccount: ${policy.accountId}\nNonce: ${envelope.payload.nonce}\nPolicy: ${canonical}`;
-  if (envelope.payload.message !== expected) return fail(res,403,"Signed message does not match the submitted policy.");
-  try { await verifyPolicySignature(envelope); } catch { return fail(res,403,"Wallet signature could not be verified."); }
-  challenges.delete(req.telegramId!);
-  await pool.query("INSERT INTO policies(user_id,body,signature,signer_public_key,signed_message,signed_nonce,active) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id) DO UPDATE SET body=EXCLUDED.body,signature=EXCLUDED.signature,signer_public_key=EXCLUDED.signer_public_key,signed_message=EXCLUDED.signed_message,signed_nonce=EXCLUDED.signed_nonce,active=true,updated_at=now()",[req.userId,JSON.stringify(policy),JSON.stringify(envelope),envelope.publicKey,expected,Buffer.from(envelope.payload.nonce,"base64"),!policy.freeze]);
-  res.json({saved:true,policy});
+  const challenge=await pool.query<{nonce:string}>("SELECT nonce FROM policy_signing_challenges WHERE user_id=$1 AND expires_at>now()",[req.userId]);
+  if(challenge.rows[0]?.nonce!==envelope.payload.nonce)return fail(res,403,"Policy signing challenge is missing, expired, or already used.");
+  if(envelope.payload.message!==expected)return fail(res,403,"Signed message does not match the submitted policy.");
+  try{await verifyPolicySignature(envelope);}catch{return fail(res,403,"Wallet signature could not be verified.");}
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const consumed=await client.query("DELETE FROM policy_signing_challenges WHERE user_id=$1 AND nonce=$2 AND expires_at>now() RETURNING nonce",[req.userId,envelope.payload.nonce]);
+    if(!consumed.rowCount){await client.query("ROLLBACK");return fail(res,403,"Policy signing challenge is missing, expired, or already used.");}
+    await client.query("INSERT INTO policies(user_id,body,signature,signer_public_key,signed_message,signed_nonce,active) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id) DO UPDATE SET body=EXCLUDED.body,signature=EXCLUDED.signature,signer_public_key=EXCLUDED.signer_public_key,signed_message=EXCLUDED.signed_message,signed_nonce=EXCLUDED.signed_nonce,active=true,updated_at=now()",[req.userId,JSON.stringify(policy),JSON.stringify(envelope),envelope.publicKey,expected,Buffer.from(envelope.payload.nonce,"base64"),!policy.freeze]);
+    await client.query("COMMIT");
+    res.json({saved:true,policy});
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 }));
 
 app.get("/api/assets",asyncRoute(async (_req,res) => {

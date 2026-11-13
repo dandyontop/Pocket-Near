@@ -121,7 +121,7 @@ async function notifyRNearUnlock(user:Preference,positions:RheaPosition[],notify
 export async function runInvestmentWorker(notify:WorkerNotify):Promise<{suggestions:number;positionReports:number;positionsChecked:number;unlockAlerts:number;errors:string[]}>{
   const {rows}=await pool.query<Preference>(`SELECT p.user_id::text,u.telegram_id::text,u.account_id,p.alerts_enabled,p.symbols,p.position_monitoring,p.report_frequency,p.last_position_check_at
     FROM investment_preferences p JOIN users u ON u.id=p.user_id
-    WHERE p.alerts_enabled=true OR p.position_monitoring=true ORDER BY p.last_position_check_at NULLS FIRST LIMIT 100`);
+    WHERE u.telegram_id IS NOT NULL AND (p.alerts_enabled=true OR p.position_monitoring=true) ORDER BY p.last_position_check_at NULLS FIRST LIMIT 100`);
   const result={suggestions:0,positionReports:0,positionsChecked:0,unlockAlerts:0,errors:[] as string[]};
   for(const user of rows){
     try{if(await sendPoolSuggestion(user,notify))result.suggestions++;}

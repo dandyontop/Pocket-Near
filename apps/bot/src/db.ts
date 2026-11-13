@@ -24,10 +24,20 @@ export function migrate(): Promise<void> {
       await client.query("SELECT pg_advisory_xact_lock(1952542063,1)");
       await client.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE NOT NULL,
+      id BIGSERIAL PRIMARY KEY, telegram_id BIGINT UNIQUE,
       account_id TEXT, password_salt TEXT, password_hash TEXT,
       agent_enabled BOOLEAN NOT NULL DEFAULT false, auto_enabled BOOLEAN NOT NULL DEFAULT false,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    ALTER TABLE users ALTER COLUMN telegram_id DROP NOT NULL;
+    CREATE TABLE IF NOT EXISTS wallet_login_challenges (
+      nonce TEXT PRIMARY KEY, account_id TEXT NOT NULL, message TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS wallet_login_challenges_expiry_idx ON wallet_login_challenges(expires_at);
+    CREATE TABLE IF NOT EXISTS policy_signing_challenges (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      nonce TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL
     );
     CREATE TABLE IF NOT EXISTS policies (
       user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -125,6 +135,8 @@ export function migrate(): Promise<void> {
     UPDATE users SET agent_mode=CASE WHEN auto_enabled AND agent_enabled THEN 'auto_inside_policy' WHEN agent_enabled THEN 'notify_only' ELSE 'off' END WHERE agent_mode='off' AND (agent_enabled OR auto_enabled);
     UPDATE users SET agent_mode='notify_only',auto_enabled=false WHERE agent_mode='auto_inside_policy';
     ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE wallet_login_challenges ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE policy_signing_challenges ENABLE ROW LEVEL SECURITY;
     ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
     ALTER TABLE quote_cache ENABLE ROW LEVEL SECURITY;
     ALTER TABLE live_quotes ENABLE ROW LEVEL SECURITY;

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, ArrowDownUp, ArrowRight, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Clock3, ExternalLink, Fingerprint, Gamepad2, Heart, LockKeyhole, Pause, Play, Plus, RefreshCw, Search, Shield, ShieldAlert, Sparkles, Star, Trash2, TrendingUp, Wallet, X } from "lucide-react";
 import type { AgentPolicy, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote } from "@pocket-near/shared";
 import { canonicalPolicy } from "@pocket-near/shared";
-import { api } from "./lib/api.js";
+import { api, ApiRequestError } from "./lib/api.js";
 import { CreatePasswordCard, UnlockModal } from "./components/SecurityDialogs.js";
 import { HomeScreen, WatchScreen } from "./components/WorkspaceSections.js";
 import { DiscoverSections } from "./components/DiscoverSections.js";
+import { PublicLanding } from "./components/PublicLanding.js";
 import { PolicyEditor } from "./components/PolicyEditor.js";
 import { connectWallet, disconnectWallet, executeRheaSwap, getConnector, registerRheaRoute, restoreWallet, signPolicy, type WalletAccount } from "./lib/wallet.js";
 
@@ -37,6 +38,7 @@ export default function App(){
   const [passwordSet,setPasswordSet]=useState(false);
   const [assetsReady,setAssetsReady]=useState(false);
   const [loading,setLoading]=useState(true);
+  const [walletSignInRequired,setWalletSignInRequired]=useState(false);
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
   const [busy,setBusy]=useState(false);
@@ -136,8 +138,18 @@ export default function App(){
     const hashParams=new URLSearchParams(window.location.hash.replace(/^#/,""));
     const initData=webApp?.initData||params.get("tgWebAppData")||hashParams.get("tgWebAppData")||"";
     const start=async()=>{
-      try{if(initData)await api.login(initData);else if(import.meta.env.DEV)await fetch(`${import.meta.env.VITE_API_URL??""}/api/auth/dev`,{method:"POST",credentials:"include"});else throw new Error("Telegram launch data is missing. Open Pocket Near from the Telegram bot or Mini App button; direct web URLs cannot establish a trusted Telegram session.");await loadDashboard();}
-      catch(e){setError(e instanceof Error?e.message:"Could not open Pocket Near.");}
+      const browserSession=!initData&&!import.meta.env.DEV;
+      try{
+        if(initData)await api.login(initData);
+        else if(import.meta.env.DEV){
+          const response=await fetch(`${import.meta.env.VITE_API_URL??""}/api/auth/dev`,{method:"POST",credentials:"include"});
+          if(!response.ok)throw new Error("Development sign-in is unavailable.");
+        }
+        await loadDashboard();
+      }catch(e){
+        if(browserSession&&e instanceof ApiRequestError&&e.status===401)setWalletSignInRequired(true);
+        else setError(e instanceof Error?e.message:"Could not open Pocket Near.");
+      }
       finally{setLoading(false);}
     };
     void start();
@@ -171,7 +183,7 @@ export default function App(){
     }catch(e){setError(e instanceof Error?e.message:"Could not load a live quote.");return null;}finally{setBusy(false);}
   },[account,from,to,amount,maxSlippage,policy,recipient,refundTo]);
 
-  const connect=async()=>{setBusy(true);setError("");try{const a=await connectWallet();const challenge=await api.walletChallenge(a.accountId);const signed=await signPolicy(challenge.message,challenge.recipient,challenge.nonce);await api.walletVerify({...signed,payload:{message:challenge.message,recipient:challenge.recipient,nonce:challenge.nonce}});try{window.localStorage.removeItem(disconnectedWalletKey);}catch{}setAccount(a);setProfileAccountId(a.accountId);setNotice(`Connected ${a.accountId}`);await loadDashboard();}catch(e){setError(e instanceof Error?e.message:"Wallet connection failed.");}finally{setBusy(false);}};
+  const connect=async()=>{setBusy(true);setError("");try{const a=await connectWallet();const challenge=await api.walletChallenge(a.accountId);const signed=await signPolicy(challenge.message,challenge.recipient,challenge.nonce);await api.walletVerify({...signed,payload:{message:challenge.message,recipient:challenge.recipient,nonce:challenge.nonce}});try{window.localStorage.removeItem(disconnectedWalletKey);}catch{}setAccount(a);setProfileAccountId(a.accountId);await loadDashboard();setWalletSignInRequired(false);setNotice(`Connected ${a.accountId}`);}catch(e){setError(e instanceof Error?e.message:"Wallet connection failed.");}finally{setBusy(false);}};
   const disconnect=async()=>{
     if(!account)return;
     const accountId=account.accountId;
@@ -290,6 +302,7 @@ export default function App(){
   const visibleApps=[...apps.filter(a=>(exploreCategory==="All"||a.category===exploreCategory)&&`${a.name} ${a.blurb}`.toLowerCase().includes(exploreSearch.toLowerCase()))].sort((a,b)=>exploreSort==="name"?a.name.localeCompare(b.name):exploreSort==="featured"?Number(b.featured)-Number(a.featured)||((b.tvl??0)-(a.tvl??0)):((b.tvl??0)-(a.tvl??0))||Number(b.featured)-Number(a.featured));
 
   if(loading)return <main className="splash"><div className="brandmark">pn</div><span className="loader"/><p>Opening your pocket…</p></main>;
+  if(walletSignInRequired)return <PublicLanding busy={busy} error={error} onConnect={()=>void connect()}/>;
   return <div className="app-shell">
     <header className="topbar"><div className="brand"><div className="brandmark">pn</div><div><strong>Pocket Near</strong><span>Personal intent desk</span></div></div><div className="topbar-actions">{account&&<span className="wallet-chip"><Wallet size={12}/>{short(account.accountId)}</span>}<button className="icon-button" aria-label="Price alerts" onClick={()=>setTab("Watch")}><Bell size={18}/>{alerts.length>0&&<i/>}</button></div></header>
     <main className="content">

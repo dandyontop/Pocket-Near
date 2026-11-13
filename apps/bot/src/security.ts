@@ -30,11 +30,20 @@ export function verifyTelegramInitData(initData: string): { userId: number } {
 export async function makeSession(telegramId: number): Promise<string> {
   return new SignJWT({ telegramId }).setProtectedHeader({ alg: "HS256" }).setSubject(String(telegramId)).setIssuedAt().setExpirationTime("12h").sign(sessionKey);
 }
-export async function readSession(token: string): Promise<number> {
+export async function makeUserSession(userId: number): Promise<string> {
+  return new SignJWT({ userId }).setProtectedHeader({ alg: "HS256" }).setSubject(String(userId)).setIssuedAt().setExpirationTime("12h").sign(sessionKey);
+}
+export async function readSession(token: string): Promise<{ telegramId: number } | { userId: number }> {
   const { payload } = await jwtVerify(token, sessionKey, { algorithms: ["HS256"] });
-  const id = Number(payload.telegramId);
-  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Invalid session.");
-  return id;
+  if(payload.telegramId!==undefined&&payload.userId===undefined){
+    const telegramId=Number(payload.telegramId);
+    if(Number.isSafeInteger(telegramId)&&telegramId>0)return {telegramId};
+  }
+  if(payload.userId!==undefined&&payload.telegramId===undefined){
+    const userId=Number(payload.userId);
+    if(Number.isSafeInteger(userId)&&userId>0)return {userId};
+  }
+  throw new Error("Invalid session.");
 }
 
 export async function makePasswordHash(password: string): Promise<{ salt: string; hash: string }> {

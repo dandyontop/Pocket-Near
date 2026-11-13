@@ -8,7 +8,7 @@ export function startAgentWorker(notify:AgentNotify,intervalMs:number):()=>void 
   const tick=async()=>{
     if(running)return;running=true;
     try{
-      const {rows}=await pool.query<{id:string;telegram_id:string;account_id:string;body:unknown}>("SELECT u.id,u.telegram_id,u.account_id,p.body FROM users u JOIN policies p ON p.user_id=u.id WHERE u.agent_enabled=true AND u.agent_mode='notify_only' AND u.master_lock=false AND p.active=true AND u.account_id IS NOT NULL");
+      const {rows}=await pool.query<{id:string;telegram_id:string;account_id:string;body:unknown}>("SELECT u.id,u.telegram_id,u.account_id,p.body FROM users u JOIN policies p ON p.user_id=u.id WHERE u.telegram_id IS NOT NULL AND u.agent_enabled=true AND u.agent_mode='notify_only' AND u.master_lock=false AND p.active=true AND u.account_id IS NOT NULL");
       for(const row of rows){
         try{
           const policy=policySchema.parse(row.body);if(policy.freeze){await pool.query("UPDATE users SET last_run_at=now(),last_error='Emergency freeze active' WHERE id=$1",[row.id]);continue;}

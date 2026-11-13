@@ -1,17 +1,20 @@
 import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
+export class ApiRequestError extends Error {
+  constructor(message:string,readonly status:number){super(message);this.name="ApiRequestError";}
+}
 async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const response=await fetch(`${API}${path}`,{...init,credentials:"include",headers:{"content-type":"application/json",...init.headers}});
   if(response.status===204)return undefined as T;
   const text=await response.text();
   let data:(T & {error?:string})|undefined;
   try{data=JSON.parse(text) as T & {error?:string};}catch{
-    if(!response.ok)throw new Error(text.trim()||`Request failed (${response.status})`);
+    if(!response.ok)throw new ApiRequestError(text.trim()||`Request failed (${response.status})`,response.status);
     throw new Error("The API returned an invalid response.");
   }
   if(!data)throw new Error("The API returned an empty response.");
-  if(!response.ok)throw new Error(data.error??`Request failed (${response.status})`);
+  if(!response.ok)throw new ApiRequestError(data.error??`Request failed (${response.status})`,response.status);
   return data;
 }
 export const api={
