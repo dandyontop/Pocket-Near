@@ -69,15 +69,14 @@ type ActivityScreenProps={
   onSubmitDepositHash:()=>void;
 };
 
-const terminalSwapStatuses=new Set(["SUCCESS","REFUNDED","FAILED","INCOMPLETE_DEPOSIT"]);
-const swapStepOrder=["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS"];
 const swapStatusLabel=(status:string)=>status==="SUCCESS"?"Complete":status==="REFUNDED"?"Refunded":status==="FAILED"?"Failed":status==="INCOMPLETE_DEPOSIT"?"Incomplete deposit":status.replaceAll("_"," ").toLowerCase().replace(/^\w/,value=>value.toUpperCase());
 
 export function ActivityScreen({swaps,selected,assets,depositHash,statusError,busy,statusBusyId,onSelect,onRefreshAll,onRefresh,onDepositHashChange,onSendNear,onSubmitDepositHash}:ActivityScreenProps){
   const assetLabel=(assetId:string)=>assets.find(asset=>asset.assetId===assetId)?.symbol??assetId;
   const selectedStatus=selected?.status??"";
-  const currentStep=selected?(terminalSwapStatuses.has(selectedStatus)?3:swapStepOrder.indexOf(selectedStatus)):-1;
   const failed=selected&&["REFUNDED","FAILED","INCOMPLETE_DEPOSIT"].includes(selectedStatus);
+  const depositDetected=selected&&(["KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS","REFUNDED","INCOMPLETE_DEPOSIT"].includes(selectedStatus)||Boolean(selected.depositTxHash));
+  const processingStarted=selected&&["PROCESSING","SUCCESS","REFUNDED"].includes(selectedStatus);
   return <section className="page-title activity-screen">
     <div className="watch-heading"><div><p className="eyebrow">YOUR SWAPS</p><h1>Activity</h1></div><button className="icon-button light" aria-label="Refresh saved swaps" onClick={onRefreshAll}><RefreshCw size={15}/></button></div>
     <p>Track saved NEAR Intents swaps, deposit steps, and provider status. Rhea pool swaps are submitted directly by your wallet and appear in your wallet activity.</p>
@@ -87,9 +86,10 @@ export function ActivityScreen({swaps,selected,assets,depositHash,statusError,bu
       <div className="section-heading compact"><div><p className="eyebrow">{assetLabel(selected.quote.originAsset)} → {assetLabel(selected.quote.destinationAsset)}</p><h2>{swapStatusLabel(selected.status)}</h2></div><button className="icon-button light" aria-label="Refresh swap status" onClick={()=>onRefresh(selected.id)} disabled={statusBusyId===selected.id}>{statusBusyId===selected.id?<span className="loader small"/>:<RefreshCw size={15}/>}</button></div>
       <div className="swap-timeline" aria-label={`Swap status: ${swapStatusLabel(selected.status)}`}>
         {["Quote created","Deposit detected","Processing","Complete"].map((label,index)=>{
-          const complete=index===0||currentStep>=index||selected.status==="SUCCESS";
+          const complete=index===0||(index===1&&Boolean(depositDetected))||(index===2&&Boolean(processingStarted))||(index===3&&selected.status==="SUCCESS");
           const active=selected.status==="PENDING_DEPOSIT"?index===1:selected.status==="KNOWN_DEPOSIT_TX"?index===2:selected.status==="PROCESSING"?index===2:false;
-          return <div className={`swap-timeline-step ${complete?"complete":""} ${active?"current":""} ${failed&&index===3?"failed":""}`} key={label}><span>{complete&&(!failed||index<3)?<Check size={12}/>:<span>{index+1}</span>}</span><small>{failed&&index===3?swapStatusLabel(selected.status):label}</small></div>;
+          const failurePoint=Boolean(failed&&index===3);
+          return <div className={`swap-timeline-step ${complete?"complete":""} ${active?"current":""} ${failurePoint?"failed":""}`} key={label}><span>{failurePoint?<ShieldAlert size={12}/>:complete?<Check size={12}/>:<span>{index+1}</span>}</span><small>{failurePoint?swapStatusLabel(selected.status):label}</small></div>;
         })}
       </div>
       {selected.status==="PENDING_DEPOSIT"&&<div className="activity-next-step">

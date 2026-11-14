@@ -1,0 +1,260 @@
+:root {
+  --ink: #173329;
+  --muted: #66786c;
+  --line: #dfe4d7;
+  --green: #176348;
+  --lime: #d5fa83;
+  --paper: #fffdf5;
+  --soft: #f5f3e9;
+}
+
+body { background: #eeeede; color: var(--ink); }
+.app-shell {
+  background-color: #f8f6ec;
+  background-image: radial-gradient(#82967e12 .7px, transparent .7px);
+  background-size: 8px 8px;
+}
+.topbar {
+  background: #fbf9f0f2;
+  border-bottom: 1px dashed #d9dfd2;
+}
+.brandmark { border-radius: 10px; box-shadow: inset 0 0 0 1px #d6ff9140; }
+.content { padding-top: 25px; }
+.eyebrow { color: #63816c; font-size: 10px; letter-spacing: .12em; }
+.greeting h1,.page-title h1 { color: #173329; }
+
+/* The balance becomes Pocket Near's visual anchor; the orbit is a route mark. */
+.home-portfolio {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 19px;
+  border: 1px solid #18543f;
+  border-radius: 20px 20px 20px 7px;
+  background: linear-gradient(135deg, #143e31 0%, #1b684b 72%, #1b684b 100%);
+  color: #fff;
+  box-shadow: 0 12px 28px #17332922;
+}
+.home-portfolio::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 205px;
+  height: 130px;
+  right: -82px;
+  top: -31px;
+  border: 1px dashed #d5fa8380;
+  border-radius: 50%;
+  transform: rotate(-29deg);
+}
+.home-portfolio::after {
+  content: "";
+  position: absolute;
+  right: 51px;
+  top: 23px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lime);
+  box-shadow: 0 0 0 5px #d5fa8326, 67px 37px 0 -1px #d5fa83;
+}
+.home-portfolio-head,.home-portfolio-head svg { color: #c7dec9; }
+.home-portfolio-head { font-size: 10px; }
+.home-portfolio>strong { position: relative; z-index: 1; font-size: 28px; letter-spacing: -.04em; }
+.home-account { color: #d4e1d5; font-size: 11px; }
+.home-portfolio .home-disconnect { color: #e9f3e9; background: #ffffff16; border: 1px solid #ffffff35; }
+.home-portfolio .secondary-button { width: max-content; color: #143e31; background: var(--lime); border-color: var(--lime); }
+.secure-pill { border-color: #dce5d7; color: #3f624a; background: #fffdf5; }
+
+/* Replace the pile of same-shaped dashboard cards with notebook sections. */
+.home-summary {
+  margin: 21px 0;
+  padding: 15px 0;
+  border: 0;
+  border-top: 1px dashed #cfd8c9;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.home-summary .section-heading h2 { font-size: 17px; }
+.home-summary .intent-swap-history-row {
+  min-height: 48px;
+  border: 0;
+  border-top: 1px solid #e2e6dc;
+  border-radius: 0;
+  background: transparent;
+}
+.home-summary .intent-swap-history-row span { font-size: 12px; }
+.home-agent-status { font-size: 11px; color: #5b7162; }
+.home-network-summary .flywheel-primary-metrics>div {
+  background: #fffdf5;
+  border: 1px solid #e3e6da;
+  border-radius: 5px 12px 12px 12px;
+}
+.home-network-summary .flywheel-primary-metrics span { font-size: 10px; }
+.home-network-summary .flywheel-primary-metrics strong { font-size: 15px; }
+.home-network-summary>small { font-size: 10px; line-height: 1.5; }
+.home-more-network {
+  border: 1px dashed #c7d3c5;
+  border-radius: 6px 14px 14px 14px;
+  background: #fbf9f0;
+}
+.home-more-network>summary { font-size: 12px; }
+
+/* A swap quote reads as a route ticket, with the drawn path behind the stops. */
+.swap-flow.quote-card {
+  border: 1px solid #d9dfd1;
+  border-radius: 19px 19px 19px 6px;
+  background: #fffdf5;
+  box-shadow: 0 9px 22px #1733290c;
+}
+.swap-step-indicator { font-size: 10px; }
+.swap-step-indicator span.active { color: #176348; }
+.routebook-route-caption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 1px 8px;
+  color: #647b68;
+  font-size: 10px;
+}
+.routebook-route-caption>span:first-child {
+  color: #51765c;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .12em;
+}
+.routebook-route-caption>span:last-child { display: flex; align-items: center; gap: 7px; }
+.routebook-route-caption i { width: 5px; height: 5px; border-radius: 50%; background: #73a259; }
+.pair-line { position: relative; isolation: isolate; gap: 10px; }
+.pair-line::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 20px;
+  right: 20px;
+  border-top: 2px dashed #8ab071;
+}
+.asset-select select {
+  min-height: 46px;
+  border-color: #dce4d6;
+  border-radius: 13px 13px 13px 5px;
+  background: #fff;
+  font-size: 12px;
+}
+.swap-directions {
+  width: 34px;
+  height: 34px;
+  border-color: #cddbc6;
+  color: #245b40;
+  box-shadow: 0 0 0 4px #fffdf5;
+}
+.amount-label { font-size: 11px; }
+.amount-label input { min-height: 54px; font-size: 23px; }
+.swap-flow .quote-result { border-top: 1px dashed #cdd7c9; padding-top: 14px; }
+.quote-details>div { min-height: 36px; }
+.quote-details>div span { font-size: 10px; }
+.quote-details>div b { font-size: 11px; }
+.swap-flow>.primary-button,.swap-flow .quote-result>.primary-button { min-height: 46px; border-radius: 12px 12px 12px 5px; }
+
+/* Status is a sequence of observed checkpoints, not a generic progress bar. */
+.activity-screen>p { color: #627267; font-size: 12px; line-height: 1.55; }
+.activity-swap-list { gap: 0; }
+.activity-swap-list .intent-swap-history-row {
+  min-height: 58px;
+  padding: 10px 3px;
+  border: 0;
+  border-bottom: 1px dashed #d9e0d5;
+  border-radius: 0;
+  background: transparent;
+}
+.activity-swap-list .intent-swap-history-row span { font-size: 12px; }
+.activity-swap-list .intent-swap-history-row small { font-size: 10px; }
+.activity-swap-list .intent-swap-history-row strong { font-size: 10px; }
+.intent-swap-panel {
+  border: 1px solid #dbe2d6;
+  border-radius: 18px 18px 18px 6px;
+  background: #fffdf5;
+  box-shadow: 0 8px 20px #1733290c;
+}
+.swap-timeline { position: relative; gap: 4px; margin: 18px 0; }
+.swap-timeline::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 12%;
+  right: 12%;
+  border-top: 1px dashed #c4d2bf;
+}
+.swap-timeline-step { position: relative; z-index: 1; }
+.swap-timeline-step>span { width: 25px; height: 25px; font-size: 10px; }
+.swap-timeline-step small { max-width: 80px; font-size: 10px; line-height: 1.35; }
+.activity-next-step { font-size: 11px; line-height: 1.6; }
+.swap-technical-details { border-style: dashed; background: #fbf9f0; }
+.swap-technical-details summary { font-size: 11px; }
+
+/* Evidence is given a consistent “field note” edge and more room to read. */
+.thesis-feature {
+  position: relative;
+  border: 1px solid #d9dfd1;
+  border-radius: 19px 19px 19px 6px;
+  background: #fffdf5;
+  box-shadow: 0 8px 22px #1733290c;
+}
+.thesis-feature::before {
+  content: "";
+  position: absolute;
+  top: 17px;
+  bottom: 17px;
+  left: 0;
+  border-left: 2px dashed #8ab071;
+}
+.thesis-feature .meme-disclaimer,.thesis-candidates>p { color: #5f7164; font-size: 11px; line-height: 1.55; }
+.thesis-budget { border: 1px dashed #d7dfd2; background: #f7f5eb; font-size: 11px; }
+.thesis-candidates h3 { font-size: 16px; }
+.thesis-candidates h4 { font-size: 13px; }
+.thesis-candidate-list { gap: 0; }
+.thesis-candidate-list article {
+  padding: 13px 3px;
+  border: 0;
+  border-top: 1px dashed #d6ddd2;
+  border-radius: 0;
+  background: transparent;
+  gap: 12px;
+}
+.thesis-candidate-list article>div { gap: 6px; }
+.thesis-candidate-list article strong,.thesis-candidate-list article b { font-size: 12px; }
+.thesis-candidate-list article small { color: #627267; font-size: 10px; line-height: 1.5; }
+.thesis-candidate-list article .routebook-source {
+  width: fit-content;
+  padding: 4px 7px;
+  border-left: 2px solid #83a96d;
+  background: #f0f2e7;
+  color: #526c57;
+  overflow-wrap: anywhere;
+}
+.thesis-candidate-list article a { font-size: 10px; }
+
+.discover-segments { border-color: #d9dfd2; background: #eeefe4; }
+.discover-segments button { font-size: 11px; }
+.discover-segments button.active { color: #174e39; background: #fffdf5; }
+.tabbar {
+  border-top: 1px dashed #d4dccf;
+  background: #fbf9f0f2;
+}
+.tabbar button span { font-size: 10px; }
+.tabbar button.selected { color: #176348; }
+
+@media (max-width: 380px) {
+  .home-portfolio>strong { font-size: 24px; }
+  .home-network-summary .flywheel-primary-metrics { gap: 6px; }
+  .home-network-summary .flywheel-primary-metrics>div { padding: 9px 7px; }
+  .home-network-summary .flywheel-primary-metrics strong { font-size: 13px; }
+  .swap-timeline-step small { max-width: 68px; font-size: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}

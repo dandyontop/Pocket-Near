@@ -42,20 +42,20 @@ export default function ThesisFeature({accountId,nativeBalance,nearPrice}:Thesis
         <p>These are research candidates, not picks by expected return. Ranking uses market capitalization within the configured price feed and 24-hour volume for indexed pools.</p>
         <h4>Configured crypto price feed</h4>
         {marketAssets.length?<div className="thesis-candidate-list">{marketAssets.map((asset,index)=><article key={asset.id}>
-          <div><strong>#{index+1} {asset.name} ({asset.symbol})</strong><small>Market cap {asset.marketCap===null?"unavailable":usd(asset.marketCap)} · {asset.change24hPct===null?"24h move unavailable":`${asset.change24hPct>=0?"+":""}${asset.change24hPct.toFixed(2)}% over 24h`}</small><small>Source: {asset.source} · updated {new Date(asset.updatedAt).toLocaleString()}</small></div>
+          <div><strong>#{index+1} {asset.name} ({asset.symbol})</strong><small>Market cap {asset.marketCap===null?"unavailable":usd(asset.marketCap)} · {asset.change24hPct===null?"24h move unavailable":`${asset.change24hPct>=0?"+":""}${asset.change24hPct.toFixed(2)}% over 24h`}</small><small className="routebook-source">Source: {asset.source} · updated {new Date(asset.updatedAt).toLocaleString()}</small></div>
           <div><b>{usd(asset.priceUsd)}</b>{riskValid&&asset.priceUsd>0&&<small>Selected amount ≈ {(riskValue/asset.priceUsd).toLocaleString("en-US",{maximumFractionDigits:6})} {asset.symbol}; excludes costs and does not check for a live swap route.</small>}</div>
         </article>)}</div>:<p className="meme-disclaimer">No current token rows were returned.</p>}
         <p className="meme-disclaimer">Daily price changes do not identify a likely bottom. The configured feed is not the whole crypto market.</p>
         <h4>NEAR and stablecoin pools</h4>
         {nearPools.length?<div className="thesis-candidate-list">{nearPools.map((pool,index)=><article key={pool.poolId}>
-          <div><strong>#{index+1} {pool.symbols.join(" / ")}</strong><small>TVL {usd(pool.tvlUsd)} · 24h volume {pool.volume24hUsd===null?"unavailable":usd(pool.volume24hUsd)} · type {pool.poolType??"unclassified"}</small><small>Pool source updated {new Date(pool.updatedAt).toLocaleString()}</small></div>
+          <div><strong>#{index+1} {pool.symbols.join(" / ")}</strong><small>TVL {usd(pool.tvlUsd)} · 24h volume {pool.volume24hUsd===null?"unavailable":usd(pool.volume24hUsd)} · type {pool.poolType??"unclassified"}</small><small className="routebook-source">Pool source updated {new Date(pool.updatedAt).toLocaleString()}</small></div>
           <div>{pool.feeApr24hRunRatePct===null?<small>Fee run-rate unavailable</small>:<small>Backward-looking fee run-rate {pool.feeApr24hRunRatePct.toFixed(2)}%</small>}<a href={pool.url} target="_blank" rel="noreferrer" aria-label={`Review ${pool.symbols.join(" / ")} pool`}><ArrowUpRight size={14}/> Review pool</a></div>
           {riskValid&&<small>Your selected amount is only a risk cap. The data source does not report this pool's minimum deposit, so affordability cannot be confirmed.</small>}
         </article>)}</div>:<p className="meme-disclaimer">No current NEAR/stablecoin pool rows were returned.</p>}
         {thesis.facts.gameDirectory.length>0&&<><h4>Curated NEAR game directory</h4><div className="thesis-candidate-list">{thesis.facts.gameDirectory.map(game=><article key={game.id}>
           <div><strong>{game.name}</strong><small>{game.blurb} · {game.tags.join(", ")}</small></div>
           <a href={game.url} target="_blank" rel="noreferrer">Explore <ArrowUpRight size={14}/></a>
-          <small>Entry cost and earnings were not supplied; low-budget access and play-to-earn returns are unverified.</small>
+          <small className="routebook-source">Entry cost and earnings were not supplied; low-budget access and play-to-earn returns are unverified.</small>
         </article>)}</div></>}
       </section>
     </>}
