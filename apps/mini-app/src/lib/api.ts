@@ -1,4 +1,4 @@
-import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, MarketSentiment, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview, FlywheelOverview, ThesisReport } from "@pocket-near/shared";
+import type { AgentPolicy, AgentStatus, MarketAgentCard, MarketAgentDetail, Asset, IntentSwap, WalletSwap, QuoteInput, QuoteView, PriceRow, MarketSentiment, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote, NetworkOverview, FlywheelOverview, ThesisReport } from "@pocket-near/shared";
 
 const API = import.meta.env.DEV ? import.meta.env.VITE_API_URL ?? "" : "";
 export class ApiRequestError extends Error {
@@ -37,8 +37,11 @@ export const api={
   quote:(input:QuoteInput)=>request<{quote:QuoteView;source:string;autoEligible:boolean}>("/api/quotes",{method:"POST",body:JSON.stringify(input)}),
   startIntentSwap:(quoteId:string)=>request<{swap:IntentSwap;reused:boolean}>("/api/swaps/start",{method:"POST",body:JSON.stringify({quoteId})}),
   intentSwaps:()=>request<{swaps:IntentSwap[]}>("/api/swaps"),
+  walletSwaps:()=>request<{swaps:WalletSwap[]}>("/api/wallet-swaps",{cache:"no-store"}),
+  saveWalletSwap:(input:{txHash:string;originAsset:string;destinationAsset:string;amountIn:string;amountOut:string})=>request<{swap:WalletSwap}>("/api/wallet-swaps",{method:"POST",body:JSON.stringify(input)}),
+  refreshWalletSwap:(id:string)=>request<{swap:WalletSwap}>(`/api/wallet-swaps/${encodeURIComponent(id)}/status`,{method:"POST",body:JSON.stringify({})}),
   submitIntentDeposit:(id:string,txHash:string)=>request<{swap:IntentSwap}>(`/api/swaps/${encodeURIComponent(id)}/deposit`,{method:"POST",body:JSON.stringify({txHash})}),
-  refreshIntentSwap:(id:string)=>request<{swap:IntentSwap}>(`/api/swaps/${encodeURIComponent(id)}/status`),
+  refreshIntentSwap:(id:string,checkExpired=false)=>request<{swap:IntentSwap}>(`/api/swaps/${encodeURIComponent(id)}/status${checkExpired?"?checkExpired=1":""}`),
   evaluate:(quoteId:string,recordPreview=false,userInitiated=true)=>request<{decision:{allowed:boolean;reason?:string};executionMode:string;message:string}>("/api/agent/evaluate",{method:"POST",body:JSON.stringify({quoteId,recordPreview,userInitiated})}),
   events:()=>request<{events:Array<{event_type:string;details:Record<string,unknown>;created_at:string}>}>("/api/events"),
   portfolio:()=>request<{accountId:string;balances:Array<{assetId:string;symbol:string;amount:string;decimals:number;locked:string;source:string;blockHeight:number}>;failures:string[]}>("/api/portfolio"),

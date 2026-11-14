@@ -60,7 +60,7 @@ export const quoteViewSchema=z.object({
   raw:z.record(z.unknown()),
 });
 export type QuoteView=z.infer<typeof quoteViewSchema>;
-export const intentSwapStatusSchema=z.enum(["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS","INCOMPLETE_DEPOSIT","REFUNDED","FAILED"]);
+export const intentSwapStatusSchema=z.enum(["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS","INCOMPLETE_DEPOSIT","REFUNDED","FAILED","EXPIRED"]);
 export type IntentSwapStatus=z.infer<typeof intentSwapStatusSchema>;
 export const intentSwapSchema=z.object({
   id:z.string().uuid(),quoteId:z.string().min(1),quote:quoteViewSchema,originChain:z.string().min(1),originTokenContract:z.string().nullable(),
@@ -68,6 +68,13 @@ export const intentSwapSchema=z.object({
   createdAt:z.string().datetime(),updatedAt:z.string().datetime(),
 });
 export type IntentSwap=z.infer<typeof intentSwapSchema>;
+
+export const walletSwapSchema=z.object({
+  id:z.string().uuid(),txHash:z.string().min(1),originAsset:z.string().min(1),destinationAsset:z.string().min(1),
+  amountIn:z.string().regex(/^\d+$/),amountOut:z.string().regex(/^\d+$/),status:z.enum(["PENDING","SUCCESS","FAILED"]),
+  createdAt:z.string().datetime(),updatedAt:z.string().datetime(),
+});
+export type WalletSwap=z.infer<typeof walletSwapSchema>;
 
 export interface PolicyUsage { dayAmount: string; weekAmount: string; dayKey: string; weekKey: string }
 export type PolicyDecision = { allowed: true } | { allowed: false; reason: string };

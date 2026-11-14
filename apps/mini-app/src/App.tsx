@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, ArrowDownUp, ArrowRight, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Clock3, ExternalLink, Fingerprint, Gamepad2, Heart, House, LockKeyhole, Pause, Play, Plus, RefreshCw, Search, Shield, ShieldAlert, Sparkles, Star, Trash2, TrendingUp, UserRound, Wallet, X } from "lucide-react";
-import type { AgentPolicy, Asset, IntentSwap, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote } from "@pocket-near/shared";
+import type { AgentPolicy, Asset, IntentSwap, WalletSwap, QuoteInput, QuoteView, PriceRow, EarnProtocol, ExploreApp, ExploreGame, MemeBoard, MemeVote } from "@pocket-near/shared";
 import { canonicalPolicy } from "@pocket-near/shared";
 import { api, ApiRequestError } from "./lib/api.js";
 import { CreatePasswordCard, UnlockModal } from "./components/SecurityDialogs.js";
@@ -76,6 +76,8 @@ export default function App(){
   const [repricing,setRepricing]=useState<{swapId:string;previewOutput:string}|null>(null);
   const [repriceAccepted,setRepriceAccepted]=useState(false);
   const [intentSwaps,setIntentSwaps]=useState<IntentSwap[]>([]);
+  const [walletSwaps,setWalletSwaps]=useState<WalletSwap[]>([]);
+  const [walletSwapStatusBusyId,setWalletSwapStatusBusyId]=useState("");
   const [activeIntentSwap,setActiveIntentSwap]=useState<IntentSwap|null>(null);
   const [swapStatusError,setSwapStatusError]=useState("");
   const [swapStatusBusyId,setSwapStatusBusyId]=useState("");
@@ -397,7 +399,13 @@ export default function App(){
       const status=value.status&&typeof value.status==="object"?value.status as Record<string,unknown>:{};
       if("Failure" in status)throw new Error("The NEAR transaction was included but failed. Check the transaction details in your wallet before trying again.");
       setExecutionStatus({kind:"submitted",message:hash?"Transaction submitted. Pocket Near is checking NEAR for final confirmation.":"Your wallet returned without a transaction hash. Check the wallet transaction history; automatic status checks need the hash.",...(hash?{txHash:hash,state:"pending" as const}:{})});
-      if(hash)setNotice(`Swap submitted · ${hash.slice(0,12)}…`);
+      if(hash){
+        setNotice(`Swap submitted · ${hash.slice(0,12)}…`);
+        try{
+          const saved=(await api.saveWalletSwap({txHash:hash,originAsset:quote.originAsset,destinationAsset:quote.destinationAsset,amountIn:quote.amountIn,amountOut:quote.amountOut})).swap;
+          setWalletSwaps(current=>[saved,...current.filter(item=>item.id!==saved.id)]);
+        }catch(e){setSwapStatusError(`Wallet submitted the Rhea swap, but Pocket Near could not save it to Activity: ${e instanceof Error?e.message:"history save failed"}. The wallet transaction is still submitted.`);}
+      }
       await refreshPositions();
     }catch(e){const message=e instanceof Error?e.message:"Wallet did not submit the swap.";setExecutionStatus({kind:"error",message});setError(message);}finally{setBusy(false);}
   };
@@ -443,6 +451,8 @@ export default function App(){
   const rememberIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setIntentSwaps(current=>[swap,...current.filter(item=>item.id!==swap.id)]);};
   const selectIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setSwapStatusError("");};
   const refreshIntentSwaps=async()=>{setSwapStatusError("");try{const result=await api.intentSwaps();setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:current);}catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");}};
+  const refreshWalletSwaps=async()=>{try{setWalletSwaps((await api.walletSwaps()).swaps);}catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not load wallet-confirmed swaps.");}};
+  const refreshWalletSwap=async(id:string)=>{setWalletSwapStatusBusyId(id);setSwapStatusError("");try{const swap=(await api.refreshWalletSwap(id)).swap;setWalletSwaps(current=>current.map(item=>item.id===swap.id?swap:item));}catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not refresh wallet transaction status.");}finally{setWalletSwapStatusBusyId("");}};
   const startIntentSwap=async()=>{
     if(!quote||quote.provider!=="one-click")return;
     setBusy(true);setError("");setSwapStatusError("");
@@ -459,7 +469,7 @@ export default function App(){
   };
   const refreshIntentSwap=async(id:string)=>{
     setSwapStatusBusyId(id);setSwapStatusError("");
-    try{rememberIntentSwap((await api.refreshIntentSwap(id)).swap);}
+    try{rememberIntentSwap((await api.refreshIntentSwap(id,true)).swap);}
     catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not refresh the Intents swap status.");}
     finally{setSwapStatusBusyId("");}
   };
@@ -497,17 +507,20 @@ export default function App(){
   const loadDiscover=async()=>{setDiscoverLoading(true);setDiscoverError("");try{const [earnData,appData,gameData]=await Promise.all([api.earn(),api.apps(),api.games()]);setEarn(earnData.protocols);setEarnSource(earnData.source);setApps(appData.apps);setGames(gameData.games);}catch(e){const message=e instanceof Error?e.message:"Explore data could not be loaded.";setDiscoverError(message);setError(message);}finally{setDiscoverLoading(false);}};
   const loadMemeBoard=async()=>{try{setMemeBoard(await api.memeBoard());setMemeBoardError("");}catch(e){const message=e instanceof Error?e.message:"Meme asset data could not be loaded.";setMemeBoardError(message);setError(message);}};
   useEffect(()=>{if(tab==="Swap"&&account&&assetsReady)void refreshSwapBalances();},[tab,account?.accountId,assetsReady,assets]);
-  useEffect(()=>{if(!account){setIntentSwaps([]);setActiveIntentSwap(null);return;}let active=true;void api.intentSwaps().then(result=>{if(!active)return;setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:result.swaps[0]??null);}).catch(e=>{if(active)setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");});return()=>{active=false;};},[account?.accountId]);
+  useEffect(()=>{if(!account){setIntentSwaps([]);setWalletSwaps([]);setActiveIntentSwap(null);return;}let active=true;void api.intentSwaps().then(result=>{if(!active)return;setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:result.swaps[0]??null);}).catch(e=>{if(active)setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");});void api.walletSwaps().then(result=>{if(active)setWalletSwaps(result.swaps);}).catch(e=>{if(active)setSwapStatusError(e instanceof Error?e.message:"Could not load wallet-confirmed swaps.");});return()=>{active=false;};},[account?.accountId]);
   useEffect(()=>{
-    const pending=intentSwaps.filter(swap=>["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING"].includes(swap.status));
+    const selectedPending=activeIntentSwap&&["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING"].includes(activeIntentSwap.status)&&Date.parse(activeIntentSwap.quote.expiresAt)>Date.now()?activeIntentSwap:null;
+    const pending=selectedPending?[selectedPending]:[];
     if(!account||!pending.length)return;
     let active=true;
     let inFlight=false;
-    const poll=async()=>{if(inFlight)return;inFlight=true;try{const results=await Promise.allSettled(pending.map(swap=>api.refreshIntentSwap(swap.id)));if(!active)return;for(const result of results){if(result.status==="fulfilled")rememberIntentSwap(result.value.swap);else setSwapStatusError(result.reason instanceof Error?result.reason.message:"Could not refresh a pending swap status.");}}finally{inFlight=false;}};
-    void poll();
-    const timer=window.setInterval(()=>void poll(),15_000);
-    return()=>{active=false;window.clearInterval(timer);};
-  },[account?.accountId,intentSwaps.map(swap=>`${swap.id}:${swap.status}`).join("|")]);
+    let failures=0;
+    let timer=0;
+    const poll=async()=>{if(inFlight||!active)return;inFlight=true;let delay=60_000;try{rememberIntentSwap((await api.refreshIntentSwap(pending[0]!.id)).swap);failures=0;}catch(e){failures++;delay=Math.min(15*60_000,60_000*2**failures);if(active&&failures===1)setSwapStatusError(e instanceof Error?e.message:"Could not refresh the pending swap status.");}finally{inFlight=false;if(active)timer=window.setTimeout(()=>void poll(),delay);}};
+    timer=window.setTimeout(()=>void poll(),60_000);
+    return()=>{active=false;window.clearTimeout(timer);};
+  },[account?.accountId,activeIntentSwap?.id,activeIntentSwap?.status]);
+  useEffect(()=>{if(tab!=="Activity"||!account)return;const pending=walletSwaps.find(swap=>swap.status==="PENDING");if(!pending)return;const timer=window.setInterval(()=>void refreshWalletSwap(pending.id),60_000);return()=>window.clearInterval(timer);},[tab,account?.accountId,walletSwaps.map(swap=>`${swap.id}:${swap.status}`).join("|")]);
   useEffect(()=>{if(tab==="Explore"&&(exploreSection==="Earn"||exploreSection==="Apps & games"))void loadDiscover();if(tab==="Explore"&&exploreSection==="Earn")void refreshPositions();if(tab==="Profile")void refreshEvents();},[tab,exploreSection]);
   useEffect(()=>{if(tab==="Swap"){void loadMemeBoard();return;}if(tab!=="Explore"||exploreSection!=="Markets")return;let active=true;const refresh=()=>{if(active){void loadPrices();void loadMemeBoard();}};refresh();const id=window.setInterval(refresh,30_000);return()=>{active=false;window.clearInterval(id);};},[tab,exploreSection]);
   useEffect(()=>{if(!account){setNativeBalance(null);setPortfolioError("");return;}let active=true;void api.portfolio().then(data=>{if(!active)return;const near=data.balances.find(b=>b.symbol==="NEAR");setNativeBalance(near?fmt(near.amount,near.decimals):null);setPortfolioError(data.failures.join(" "));}).catch(e=>{if(active)setPortfolioError(e instanceof Error?e.message:"NEAR balance is unavailable.");});return()=>{active=false;};},[account?.accountId]);
@@ -530,7 +543,7 @@ export default function App(){
       {error&&<div className="alert error"><ShieldAlert size={17}/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss"><X size={15}/></button></div>}
       {notice&&<div className="alert success"><Check size={17}/><span>{notice}</span><button onClick={()=>setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
       {tab==="Home"&&<><Suspense fallback={<div className="empty-activity">Loading Home…</div>}><HomeScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} balanceError={portfolioError} busy={busy} agentOn={agentOn} onConnect={()=>void connect()} onDisconnect={()=>void disconnect()} onSwap={()=>setTab("Swap")}/></Suspense><details className="home-more-network" onToggle={event=>setNetworkDetailsOpen(event.currentTarget.open)}><summary>More network analytics and scenarios</summary>{networkDetailsOpen&&<Suspense fallback={<div className="empty-activity">Loading network details…</div>}><FlywheelScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} busy={busy} onConnect={()=>void connect()} onStake={amount=>void submitRNearStake(amount)} showStaking={false}/></Suspense>}</details></>}
-      {tab==="Activity"&&<Suspense fallback={<div className="empty-activity">Loading Activity…</div>}><ActivityScreen swaps={intentSwaps} selected={activeIntentSwap??intentSwaps[0]??null} assets={assets} previewOutput={repricing?.swapId===(activeIntentSwap??intentSwaps[0])?.id?repricing?.previewOutput??null:null} repriceAccepted={repriceAccepted} statusError={swapStatusError} busy={busy} statusBusyId={swapStatusBusyId} onSelect={selectIntentSwap} onRefreshAll={()=>void refreshIntentSwaps()} onRefresh={id=>void refreshIntentSwap(id)} onSendNear={()=>void sendNearIntentDeposit()} onAcceptReprice={()=>setRepriceAccepted(value=>!value)} onGoToSwap={()=>{setTab("Swap");setSwapStep("edit");clearActiveQuote();}}/></Suspense>}
+      {tab==="Activity"&&<Suspense fallback={<div className="empty-activity">Loading Activity…</div>}><ActivityScreen swaps={intentSwaps} walletSwaps={walletSwaps} walletSwapStatusBusyId={walletSwapStatusBusyId} selected={activeIntentSwap??intentSwaps[0]??null} assets={assets} previewOutput={repricing?.swapId===(activeIntentSwap??intentSwaps[0])?.id?repricing?.previewOutput??null:null} repriceAccepted={repriceAccepted} statusError={swapStatusError} busy={busy} statusBusyId={swapStatusBusyId} onSelect={selectIntentSwap} onRefreshAll={()=>{void refreshIntentSwaps();void refreshWalletSwaps();}} onRefresh={id=>void refreshIntentSwap(id)} onRefreshWalletSwap={id=>void refreshWalletSwap(id)} onSendNear={()=>void sendNearIntentDeposit()} onAcceptReprice={()=>setRepriceAccepted(value=>!value)} onGoToSwap={()=>{setTab("Swap");setSwapStep("edit");clearActiveQuote();}}/></Suspense>}
       {tab==="Explore"&&<>
         <section className="page-title"><p className="eyebrow">DISCOVER NEAR</p><h1>Explore</h1><p>Find markets, earn opportunities, apps, games and agents.</p></section>
         <div className="discover-segments explore-categories" role="tablist" aria-label="Explore categories">

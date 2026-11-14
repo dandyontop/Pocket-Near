@@ -7,7 +7,7 @@ import compression from "compression";
 import cookieParser from "cookie-parser";
 import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
-import { canonicalPolicy, checkPolicy, intentSwapSchema, intentSwapStatusSchema, policySchema, quoteInputSchema, type AgentPolicy, type IntentSwap, type IntentSwapStatus, type QuoteView } from "@pocket-near/shared";
+import { canonicalPolicy, checkPolicy, intentSwapSchema, intentSwapStatusSchema, policySchema, quoteInputSchema, walletSwapSchema, type AgentPolicy, type IntentSwap, type IntentSwapStatus, type QuoteView, type WalletSwap } from "@pocket-near/shared";
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, makeUserSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
@@ -39,7 +39,7 @@ const loginRate = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: "dra
 const apiRate = rateLimit({ windowMs: 60_000, limit: 90, standardHeaders: "draft-8", legacyHeaders: false });
 
 app.disable("x-powered-by");
-app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc:["'self'"],scriptSrc:["'self'","https://telegram.org"],styleSrc:["'self'","'unsafe-inline'","https://fonts.googleapis.com"],fontSrc:["'self'","data:","https://fonts.gstatic.com"],imgSrc:["'self'","data:","https:"],connectSrc:["'self'",...origins,"https://1click.chaindefuser.com","https://rpc.mainnet.near.org"] } } }));
+app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc:["'self'"],scriptSrc:["'self'","https://telegram.org"],styleSrc:["'self'","'unsafe-inline'","https://fonts.googleapis.com"],fontSrc:["'self'","data:","https://fonts.gstatic.com"],imgSrc:["'self'","data:","https:"],connectSrc:["'self'",...origins,"https://1click.chaindefuser.com",new URL(env.NEAR_RPC_URL).origin] } } }));
 app.use(cors({ origin(origin, cb) { if (!origin || origins.has(origin)) return cb(null,true); cb(new Error("Origin is not allowed.")); }, credentials: true }));
 app.use(compression());
 app.use(cookieParser());
@@ -565,6 +565,8 @@ app.post("/api/swaps/start",requireSession,asyncRoute(async(req,res)=>{
 }));
 
 app.get("/api/swaps",requireSession,asyncRoute(async(req,res)=>{
+  await pool.query(`UPDATE intent_swaps SET status='EXPIRED',status_details=COALESCE(status_details,'{}'::jsonb)||jsonb_build_object('expiredAt',now(),'expiryReason','quote expired before a deposit transaction was recorded'),updated_at=now()
+    WHERE user_id=$1 AND status='PENDING_DEPOSIT' AND deposit_tx_hash IS NULL AND CASE WHEN quote->>'expiresAt' ~ '^\\d{4}-\\d{2}-\\d{2}T' THEN (quote->>'expiresAt')::timestamptz<=now() ELSE false END`,[req.userId]);
   const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20",[req.userId]);
   res.setHeader("Cache-Control","no-store");
   res.json({swaps:result.rows.map(presentIntentSwap)});
@@ -609,8 +611,14 @@ app.get("/api/swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
   if(!id.success)return fail(res,400,"A valid swap ID is required.");
   const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE id=$1 AND user_id=$2",[id.data,req.userId]);
   if(!result.rowCount)return fail(res,404,"Swap was not found for this account.");
+  let swap=result.rows[0]!;
+  const isExpiredPending=swap.status==="PENDING_DEPOSIT"&&!swap.deposit_tx_hash&&Date.parse(swap.quote.expiresAt)<=Date.now();
+  if(isExpiredPending){
+    const expired=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status='EXPIRED',status_details=COALESCE(status_details,'{}'::jsonb)||jsonb_build_object('expiredAt',now(),'expiryReason','quote expired before a deposit transaction was recorded'),updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId]);
+    swap=expired.rows[0]!;
+    if(req.query.checkExpired!=="1"){res.setHeader("Cache-Control","no-store");return res.json({swap:presentIntentSwap(swap)});}
+  }
   if(!env.ONE_CLICK_JWT)return fail(res,503,"Status refresh is unavailable until the server is configured with ONE_CLICK_JWT.");
-  const swap=result.rows[0]!;
   if(!swap.deposit_address)return fail(res,500,"Saved swap is missing its deposit address.");
   try{
     const response=await getExecutionStatus(swap.deposit_address,swap.deposit_memo??undefined);
@@ -619,13 +627,45 @@ app.get("/api/swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
     const originHashes=(response.swapDetails as {originChainTxHashes?:Array<{hash:string}>}|undefined)?.originChainTxHashes;
     const detectedHash=Array.isArray(originHashes)?originHashes.find(item=>typeof item?.hash==="string")?.hash??null:null;
     const details={updatedAt:response.updatedAt,swapDetails:response.swapDetails};
-    const updated=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status=$3,deposit_tx_hash=COALESCE(deposit_tx_hash,$5),status_details=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId,status.data,JSON.stringify(details),detectedHash]);
+    const effectiveStatus=swap.status==="EXPIRED"&&status.data==="PENDING_DEPOSIT"&&!detectedHash?"EXPIRED":status.data;
+    const updated=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status=$3,deposit_tx_hash=COALESCE(deposit_tx_hash,$5),status_details=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId,effectiveStatus,JSON.stringify(details),detectedHash]);
     res.setHeader("Cache-Control","no-store");
     res.json({swap:presentIntentSwap(updated.rows[0]!)});
   }catch(error){
     if(error instanceof QuoteProviderError)return fail(res,error.status,error.message);
     throw error;
   }
+}));
+
+type WalletSwapRow={id:string;tx_hash:string;origin_asset:string;destination_asset:string;amount_in:string;amount_out:string;status:"PENDING"|"SUCCESS"|"FAILED";created_at:Date|string;updated_at:Date|string};
+const presentWalletSwap=(row:WalletSwapRow):WalletSwap=>walletSwapSchema.parse({id:row.id,txHash:row.tx_hash,originAsset:row.origin_asset,destinationAsset:row.destination_asset,amountIn:row.amount_in,amountOut:row.amount_out,status:row.status,createdAt:new Date(row.created_at).toISOString(),updatedAt:new Date(row.updated_at).toISOString()});
+app.get("/api/wallet-swaps",requireSession,asyncRoute(async(req,res)=>{
+  const result=await pool.query<WalletSwapRow>("SELECT id,tx_hash,origin_asset,destination_asset,amount_in,amount_out,status,created_at,updated_at FROM wallet_swaps WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30",[req.userId]);
+  res.setHeader("Cache-Control","private, no-store");res.json({swaps:result.rows.map(presentWalletSwap)});
+}));
+app.post("/api/wallet-swaps",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({txHash:z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,64}$/),originAsset:z.string().min(1).max(160),destinationAsset:z.string().min(1).max(160),amountIn:z.string().regex(/^[1-9]\d{0,77}$/),amountOut:z.string().regex(/^[1-9]\d{0,77}$/)}).safeParse(req.body);
+  if(!body.success)return fail(res,400,"A valid NEAR swap transaction and asset pair are required.");
+  if(!body.data.originAsset.startsWith("near:")||!body.data.destinationAsset.startsWith("near:")||body.data.originAsset===body.data.destinationAsset)return fail(res,400,"Wallet swap history accepts NEAR-to-NEAR Rhea swaps only.");
+  const id=randomUUID();
+  const saved=await pool.query<WalletSwapRow>(`INSERT INTO wallet_swaps(id,user_id,tx_hash,origin_asset,destination_asset,amount_in,amount_out,status)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'PENDING') ON CONFLICT(user_id,tx_hash) DO UPDATE SET tx_hash=EXCLUDED.tx_hash
+    RETURNING id,tx_hash,origin_asset,destination_asset,amount_in,amount_out,status,created_at,updated_at`,[id,req.userId,body.data.txHash,body.data.originAsset,body.data.destinationAsset,body.data.amountIn,body.data.amountOut]);
+  res.status(201).json({swap:presentWalletSwap(saved.rows[0]!)});
+}));
+app.post("/api/wallet-swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
+  const id=z.string().uuid().safeParse(req.params.id);if(!id.success)return fail(res,400,"A valid wallet swap ID is required.");
+  const saved=await pool.query<WalletSwapRow>("SELECT id,tx_hash,origin_asset,destination_asset,amount_in,amount_out,status,created_at,updated_at FROM wallet_swaps WHERE id=$1 AND user_id=$2",[id.data,req.userId]);
+  if(!saved.rowCount)return fail(res,404,"Wallet swap was not found for this account.");
+  const user=await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);const accountId=user.rows[0]?.account_id;
+  if(!accountId)return fail(res,409,"Connect the NEAR wallet that submitted this swap to refresh its status.");
+  const txHash=saved.rows[0]!.tx_hash;
+  const result=await nearProvider.viewTransactionStatus({txHash,accountId,waitUntil:"FINAL"}) as {status?:Record<string,unknown>;transaction_outcome?:{outcome?:{status?:Record<string,unknown>}};receipts_outcome?:Array<{outcome?:{status?:Record<string,unknown>}}>};
+  const statuses=[result.status,result.transaction_outcome?.outcome?.status,...(result.receipts_outcome??[]).map(receipt=>receipt.outcome?.status)].filter((status):status is Record<string,unknown>=>Boolean(status));
+  const failed=statuses.some(status=>"Failure" in status);const complete=statuses.some(status=>"SuccessValue" in status||"SuccessReceiptId" in status);
+  const status:WalletSwapRow["status"]=failed?"FAILED":complete?"SUCCESS":"PENDING";
+  const updated=await pool.query<WalletSwapRow>("UPDATE wallet_swaps SET status=$3,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,tx_hash,origin_asset,destination_asset,amount_in,amount_out,status,created_at,updated_at",[id.data,req.userId,status]);
+  res.setHeader("Cache-Control","private, no-store");res.json({swap:presentWalletSwap(updated.rows[0]!)});
 }));
 
 app.post("/api/agent/evaluate",requireSession,asyncRoute(async (req,res) => {

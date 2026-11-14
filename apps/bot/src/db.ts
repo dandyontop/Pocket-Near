@@ -82,8 +82,19 @@ export function migrate(): Promise<void> {
     ALTER TABLE intent_swaps ADD COLUMN IF NOT EXISTS origin_token_contract TEXT;
     UPDATE intent_swaps SET preview_quote_id=quote_id WHERE preview_quote_id IS NULL;
     ALTER TABLE intent_swaps ALTER COLUMN preview_quote_id SET NOT NULL;
+    ALTER TABLE intent_swaps DROP CONSTRAINT IF EXISTS intent_swaps_status_check;
+    ALTER TABLE intent_swaps ADD CONSTRAINT intent_swaps_status_check CHECK(status IN ('PENDING_DEPOSIT','KNOWN_DEPOSIT_TX','PROCESSING','SUCCESS','INCOMPLETE_DEPOSIT','REFUNDED','FAILED','EXPIRED'));
     CREATE UNIQUE INDEX IF NOT EXISTS intent_swaps_user_preview_quote_idx ON intent_swaps(user_id,preview_quote_id);
     CREATE INDEX IF NOT EXISTS intent_swaps_user_created_idx ON intent_swaps(user_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS wallet_swaps (
+      id UUID PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tx_hash TEXT NOT NULL, origin_asset TEXT NOT NULL, destination_asset TEXT NOT NULL,
+      amount_in TEXT NOT NULL, amount_out TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('PENDING','SUCCESS','FAILED')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(user_id,tx_hash)
+    );
+    CREATE INDEX IF NOT EXISTS wallet_swaps_user_created_idx ON wallet_swaps(user_id,created_at DESC);
     CREATE TABLE IF NOT EXISTS thesis_cache (
       user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       report JSONB NOT NULL, cached_at TIMESTAMPTZ NOT NULL DEFAULT now()

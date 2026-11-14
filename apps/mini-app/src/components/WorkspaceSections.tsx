@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Activity, ArrowRight, ArrowUpRight, Bot, Check, Clock3, ExternalLink, Heart, Pause, Play, RefreshCw, Search, Shield, ShieldAlert, Trash2, TrendingUp, Wallet } from "lucide-react";
-import type { AgentPolicy, Asset, EarnProtocol, IntentSwap, MarketSentiment, MemeBoard, MemeVote, NetworkOverview, PriceRow } from "@pocket-near/shared";
+import type { AgentPolicy, Asset, EarnProtocol, IntentSwap, WalletSwap, MarketSentiment, MemeBoard, MemeVote, NetworkOverview, PriceRow } from "@pocket-near/shared";
 import { api } from "../lib/api.js";
 import ThesisFeature from "./ThesisFeature.js";
 import { getRheaMarketRiskFlags } from "../lib/rheaRisk.js";
@@ -49,6 +49,8 @@ export function HomeScreen({accountId,nativeBalance,balanceError,busy,agentOn,on
 
 type ActivityScreenProps={
   swaps:IntentSwap[];
+  walletSwaps:WalletSwap[];
+  walletSwapStatusBusyId:string;
   selected:IntentSwap|null;
   assets:Asset[];
   previewOutput:string|null;
@@ -59,6 +61,7 @@ type ActivityScreenProps={
   onSelect:(swap:IntentSwap)=>void;
   onRefreshAll:()=>void;
   onRefresh:(id:string)=>void;
+  onRefreshWalletSwap:(id:string)=>void;
   onSendNear:()=>void;
   onAcceptReprice:()=>void;
   onGoToSwap:()=>void;
@@ -66,7 +69,7 @@ type ActivityScreenProps={
 
 const swapStatusLabel=(status:string)=>status==="SUCCESS"?"Complete":status==="REFUNDED"?"Refunded":status==="FAILED"?"Failed":status==="INCOMPLETE_DEPOSIT"?"Incomplete deposit":status.replaceAll("_"," ").toLowerCase().replace(/^\w/,value=>value.toUpperCase());
 
-export function ActivityScreen({swaps,selected,assets,previewOutput,repriceAccepted,statusError,busy,statusBusyId,onSelect,onRefreshAll,onRefresh,onSendNear,onAcceptReprice,onGoToSwap}:ActivityScreenProps){
+export function ActivityScreen({swaps,walletSwaps,walletSwapStatusBusyId,selected,assets,previewOutput,repriceAccepted,statusError,busy,statusBusyId,onSelect,onRefreshAll,onRefresh,onRefreshWalletSwap,onSendNear,onAcceptReprice,onGoToSwap}:ActivityScreenProps){
   const assetLabel=(assetId:string)=>assets.find(asset=>asset.assetId===assetId)?.symbol??assetId;
   const selectedStatus=selected?.status??"";
   const failed=selected&&["REFUNDED","FAILED","INCOMPLETE_DEPOSIT"].includes(selectedStatus);
@@ -75,8 +78,9 @@ export function ActivityScreen({swaps,selected,assets,previewOutput,repriceAccep
   const processingStarted=selected&&["PROCESSING","SUCCESS","REFUNDED"].includes(selectedStatus);
   return <section className="page-title activity-screen">
     <div className="watch-heading"><div><p className="eyebrow">YOUR SWAPS</p><h1>Activity</h1></div><button className="icon-button light" aria-label="Refresh saved swaps" onClick={onRefreshAll}><RefreshCw size={15}/></button></div>
-    <p>Track saved NEAR Intents swaps, deposit steps, and provider status. Pending swaps refresh every 15 seconds while Pocket Near is open and continue background checks every 30 minutes when it is closed. Rhea pool swaps are submitted directly by your wallet and appear in your wallet activity.</p>
-    {swaps.length===0?<div className="empty-activity"><Activity size={24}/><strong>No saved swaps yet</strong><span>When you prepare a live 1-Click deposit from Swap, it will appear here.</span></div>:<div className="activity-swap-list">{swaps.map(swap=><button className={`intent-swap-history-row ${selected?.id===swap.id?"active":""}`} key={swap.id} onClick={()=>onSelect(swap)}><span>{assetLabel(swap.quote.originAsset)} → {assetLabel(swap.quote.destinationAsset)}<small>{new Date(swap.createdAt).toLocaleString()}</small></span><strong>{swapStatusLabel(swap.status)}</strong></button>)}</div>}
+    <p>Track NEAR Intents deposits and Rhea swaps submitted through Pocket Near. Wallet transactions require confirmation from NEAR before they are marked complete.</p>
+    {walletSwaps.length>0&&<><div className="section-heading compact"><div><p className="eyebrow">WALLET-CONFIRMED</p><h2>Rhea swaps</h2></div></div><div className="activity-swap-list">{walletSwaps.map(swap=><article className="intent-swap-history-row" key={swap.id}><span>{assetLabel(swap.originAsset)} → {assetLabel(swap.destinationAsset)}<small>{fmtExact(swap.amountIn,assets.find(asset=>asset.assetId===swap.originAsset)?.decimals??0)} → {fmtExact(swap.amountOut,assets.find(asset=>asset.assetId===swap.destinationAsset)?.decimals??0)} · {new Date(swap.createdAt).toLocaleString()}</small><small><a href={`https://nearblocks.io/txns/${encodeURIComponent(swap.txHash)}`} target="_blank" rel="noreferrer">View NEAR transaction <ExternalLink size={12}/></a></small></span><strong>{swap.status==="SUCCESS"?"Complete":swap.status==="FAILED"?"Failed":"Submitted"}</strong>{swap.status==="PENDING"&&<button className="mini-icon" aria-label="Refresh wallet swap status" onClick={()=>onRefreshWalletSwap(swap.id)} disabled={walletSwapStatusBusyId===swap.id}>{walletSwapStatusBusyId===swap.id?<span className="loader small"/>:<RefreshCw size={14}/>}</button>}</article>)}</div></>}
+    {swaps.length===0&&walletSwaps.length===0?<div className="empty-activity"><Activity size={24}/><strong>No saved swaps yet</strong><span>Wallet-submitted Rhea swaps and NEAR Intents deposits will appear here.</span></div>:swaps.length>0&&<div className="activity-swap-list">{swaps.map(swap=><button className={`intent-swap-history-row ${selected?.id===swap.id?"active":""}`} key={swap.id} onClick={()=>onSelect(swap)}><span>{assetLabel(swap.quote.originAsset)} → {assetLabel(swap.quote.destinationAsset)}<small>{new Date(swap.createdAt).toLocaleString()}</small></span><strong>{swapStatusLabel(swap.status)}</strong></button>)}</div>}
     {statusError&&!selected&&<div className="execution-status error"><span>{statusError}</span><button className="secondary-button" onClick={onRefreshAll}>Retry</button></div>}
     {selected&&<section className="intent-swap-panel">
       <div className="section-heading compact"><div><p className="eyebrow">{assetLabel(selected.quote.originAsset)} → {assetLabel(selected.quote.destinationAsset)}</p><h2>{swapStatusLabel(selected.status)}</h2></div><button className="icon-button light" aria-label="Refresh swap status" onClick={()=>onRefresh(selected.id)} disabled={statusBusyId===selected.id}>{statusBusyId===selected.id?<span className="loader small"/>:<RefreshCw size={15}/>}</button></div>
@@ -98,6 +102,7 @@ export function ActivityScreen({swaps,selected,assets,previewOutput,repriceAccep
       </div>}
       {["KNOWN_DEPOSIT_TX","PROCESSING"].includes(selected.status)&&<p className="activity-next-step">Deposit received. The provider is processing the swap; refresh status for the latest update.</p>}
       {selected.status==="SUCCESS"&&<p className="activity-next-step">The provider reports this swap as complete.</p>}
+      {selected.status==="EXPIRED"&&<div className="execution-status off"><strong>Deposit quote expired</strong><span>This unsent quote is no longer active and will not be checked automatically. If you already sent funds, refresh provider status before taking another action.</span><button className="secondary-button" onClick={()=>onRefresh(selected.id)} disabled={statusBusyId===selected.id}>{statusBusyId===selected.id?"Checking…":"Check provider status"}</button></div>}
       {failed&&<div className="activity-next-step warning"><p>{selected.status==="REFUNDED"?"The provider reports a refund. Inspect the refund transaction and confirm funds arrived at your refund address before starting another swap.":selected.status==="INCOMPLETE_DEPOSIT"?"The provider marked this deposit incomplete. Inspect the provider status and transaction details; check the required amount and memo before taking another action.":"The provider reports the swap failed. Inspect transaction details and refund status before requesting a fresh quote."}</p><button className="secondary-button" onClick={()=>onRefresh(selected.id)} disabled={statusBusyId===selected.id}>{statusBusyId===selected.id?"Refreshing…":"Refresh provider and refund status"}</button></div>}
       {(statusError||selected.status==="PENDING_DEPOSIT")&&statusError&&<div className="execution-status error"><strong>Status update failed</strong><span>{statusError}</span><button className="secondary-button" onClick={()=>onRefresh(selected.id)}>Retry status refresh</button></div>}
       {(!depositQuoteExpired&&(!previewOutput||repriceAccepted))&&<details className="swap-technical-details"><summary>Deposit and transaction details</summary><div className="intent-swap-facts"><span>Deposit amount</span><strong>{fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)}</strong><span>Estimated output</span><strong>{fmtExact(selected.quote.amountOut,assets.find(asset=>asset.assetId===selected.quote.destinationAsset)?.decimals??0)} {assetLabel(selected.quote.destinationAsset)}</strong><span>Deposit address</span><code>{selected.quote.depositAddress??"Not provided"}</code>{selected.quote.depositMemo&&<><span>Required memo</span><code>{selected.quote.depositMemo}</code></>}{selected.depositTxHash&&<><span>Transaction hash</span><code>{selected.depositTxHash}</code></>}</div>{selected.depositTxHash&&selected.originChain==="near"&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(selected.depositTxHash)}`} target="_blank" rel="noreferrer">View NEAR transaction <ExternalLink size={13}/></a>}</details>}
@@ -185,7 +190,7 @@ function FearGreedMeter({refreshVersion}:{refreshVersion:number}){
   useEffect(()=>{void refresh();},[refreshVersion]);
   return <article className="sentiment-card">
     <div className="section-heading compact"><div><p className="eyebrow">MARKET SENTIMENT</p><h2>Fear &amp; Greed</h2></div><button className="icon-button light" aria-label="Refresh market sentiment" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={15}/></button></div>
-    {sentiment?<><div className="sentiment-value"><strong>{sentiment.value}</strong><span>/ 100</span></div><div className="sentiment-track" role="meter" aria-label="Fear and Greed index score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={sentiment.value}><span style={{width:`${sentiment.value}%`}}/></div><small>Index observation: {new Date(sentiment.observedAt).toLocaleString()}</small><small>Last checked: {new Date(sentiment.updatedAt).toLocaleString()}</small><small>Source: Alternative.me · broad crypto-market index, not a NEAR-specific reading.</small>{error&&<div className="execution-status error"><span>Could not refresh; showing the previous reading. {error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>}</>:error?<div className="execution-status error"><span>{error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>:<div className="empty-activity"><span className="loader"/><span>Loading latest index…</span></div>}
+    {sentiment?<><div className="sentiment-value"><strong>{sentiment.value}</strong><span>/ 100</span></div><div className="sentiment-track" role="meter" aria-label="Fear and Greed index score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={sentiment.value}><span style={{width:`${sentiment.value}%`}}/></div><small>Daily index observation: {new Date(sentiment.observedAt).toLocaleString()}</small><small>Last checked: {new Date(sentiment.updatedAt).toLocaleString()}</small><small>Source: Alternative.me · broad crypto-market index, not NEAR-specific; the score usually changes once per day.</small>{error&&<div className="execution-status error"><span>Could not refresh; showing the previous reading. {error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>}</>:error?<div className="execution-status error"><span>{error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>:<div className="empty-activity"><span className="loader"/><span>Loading latest index…</span></div>}
   </article>;
 }
 
