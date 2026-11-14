@@ -4,6 +4,18 @@
 .discover-content,.watch-market-section{margin-top:14px}
 .discover-content>.secondary-button{width:100%;margin-top:10px}
 .watch-secondary{margin-top:25px;padding-top:20px;border-top:1px solid var(--line)}
+.saved-policy-list{display:grid;gap:10px;margin-top:14px}
+.saved-policy{display:grid;gap:6px;padding:12px;border:1px solid #e8ece6;border-radius:13px;background:#fbfcfa}
+.saved-policy>span{font-size:11px;font-weight:700;line-height:1.5}
+.saved-policy>small{color:#78857b;font-size:10px;line-height:1.5;overflow-wrap:anywhere}
+.saved-policy-heading,.saved-policy-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.saved-policy-heading>strong{font-size:12px}
+.saved-policy-status{padding:4px 8px;border-radius:999px;font-size:9px;font-weight:700}
+.saved-policy-status.active{background:#e8f4e9;color:#347248}
+.saved-policy-status.paused{background:#fff1e8;color:#9b6138}
+.saved-policy-actions{justify-content:flex-start;margin-top:3px}
+.saved-policy-actions button{min-height:36px;padding:8px 11px;font-size:10px}
+.policy-list .empty-activity{margin:12px 0 0}
 .policy-pair-list{display:grid;gap:9px;margin:14px 0}
 .policy-pair-row{display:grid;grid-template-columns:24px minmax(0,1fr) 16px minmax(0,1fr) 30px;align-items:end;gap:7px;padding:10px;border:1px solid #e8ece6;border-radius:13px;background:#fbfcfa}
 .policy-pair-number{align-self:center;color:#839086;font-size:10px;font-weight:700;text-align:center}

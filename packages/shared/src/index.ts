@@ -292,5 +292,6 @@ export function checkPolicy(policy: AgentPolicy, usage: PolicyUsage, quote: Quot
 }
 
 export function canonicalPolicy(policy: AgentPolicy): string {
-  return JSON.stringify({ ...policy, allowedPairs: [...policy.allowedPairs].sort((a,b) => `${a.from}:${a.to}`.localeCompare(`${b.from}:${b.to}`)), allowedDestinations: [...policy.allowedDestinations].sort(), timeWindows: [...policy.timeWindows].sort((a,b) => `${a.days.join(",")}:${a.start}`.localeCompare(`${b.days.join(",")}:${b.start}`)) });
+  const compare=(left:string,right:string)=>left<right?-1:left>right?1:0;
+  return JSON.stringify({ ...policy, allowedPairs: [...policy.allowedPairs].sort((a,b) => compare(`${a.from}:${a.to}`,`${b.from}:${b.to}`)), allowedDestinations: [...policy.allowedDestinations].sort(), timeWindows: [...policy.timeWindows].sort((a,b) => compare(`${a.days.join(",")}:${a.start}`,`${b.days.join(",")}:${b.start}`)) });
 }

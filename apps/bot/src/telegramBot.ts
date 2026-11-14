@@ -1,5 +1,4 @@
 import { Telegraf, Markup } from "telegraf";
-import { policySchema } from "@pocket-near/shared";
 import { createThesis, ThesisRateLimitError } from "./thesis.js";
 import { getPrices } from "./dataFeeds.js";
 import { pool } from "./db.js";
@@ -56,15 +55,15 @@ export function createTelegramBot():Telegraf|undefined{
   bot.command("agent",async ctx=>{
     const action=ctx.message.text.split(/\s+/)[1]?.toLowerCase();if(action!=="on"&&action!=="off")return ctx.reply("Use /agent on or /agent off.");
     if(action==="on"){
-      const row=await pool.query("SELECT u.id,u.master_lock,p.active,p.body FROM users u LEFT JOIN policies p ON p.user_id=u.id WHERE u.telegram_id=$1",[ctx.from.id]);
-      if(!row.rowCount||!row.rows[0]!.active||policySchema.parse(row.rows[0]!.body).freeze)return ctx.reply("Create or unfreeze a signed policy in the Mini App first.");
+      const row=await pool.query("SELECT u.id,u.master_lock,EXISTS(SELECT 1 FROM policies p WHERE p.user_id=u.id AND p.active=true) policy_active FROM users u WHERE u.telegram_id=$1",[ctx.from.id]);
+      if(!row.rowCount||!row.rows[0]!.policy_active)return ctx.reply("Create or unfreeze a signed policy in the Mini App first.");
       if(row.rows[0]!.master_lock)return ctx.reply("Agent is locked. Open Pocket Near to unlock it.",Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]]));
     }
     await pool.query("UPDATE users SET agent_enabled=$1,agent_mode=CASE WHEN $1 THEN 'notify_only' ELSE 'off' END,auto_enabled=false,updated_at=now() WHERE telegram_id=$2",[action==="on",ctx.from.id]);return ctx.reply(action==="on"?"Agent monitoring is on in notify-only mode.":"Agent monitoring is off.");
   });
   bot.command("auto",async ctx=>ctx.reply("Auto execution is not supported. Pocket Near never signs or submits a swap for you; review each transaction and approve it in your wallet."));
   bot.command("freeze",async ctx=>{
-    const user=await pool.query("SELECT u.id FROM users u JOIN policies p ON p.user_id=u.id WHERE u.telegram_id=$1",[ctx.from.id]);
+    const user=await pool.query("SELECT u.id FROM users u WHERE u.telegram_id=$1 AND EXISTS(SELECT 1 FROM policies p WHERE p.user_id=u.id)",[ctx.from.id]);
     if(!user.rowCount)return ctx.reply("No saved policy was found. Open the Mini App to create one.");
     await pool.query("UPDATE users SET master_lock=true,updated_at=now() WHERE id=$1",[user.rows[0]!.id]);
     await ctx.reply("Agent master lock is on. Open Pocket Near to review the signed policy and unlock when ready.",Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]]));
@@ -72,11 +71,12 @@ export function createTelegramBot():Telegraf|undefined{
   bot.command("lock",async ctx=>{await pool.query("UPDATE users SET master_lock=true,updated_at=now() WHERE telegram_id=$1",[ctx.from.id]);return ctx.reply("Agent master lock is on.");});
   bot.command("unlock",ctx=>ctx.reply("For your security, unlock in Pocket Near. Passwords are never collected in Telegram chat.",Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]])));
   bot.command("status",async ctx=>{
-    const {rows}=await pool.query("SELECT p.active,p.body,u.account_id,u.agent_enabled,u.agent_mode,u.master_lock,u.auto_exec_lock FROM users u LEFT JOIN policies p ON p.user_id=u.id WHERE u.telegram_id=$1",[ctx.from.id]);
+    const {rows}=await pool.query("SELECT u.account_id,u.agent_enabled,u.agent_mode,u.master_lock,u.auto_exec_lock,(SELECT count(*) FROM policies p WHERE p.user_id=u.id) policy_count,(SELECT count(*) FROM policies p WHERE p.user_id=u.id AND p.active=true) active_policy_count FROM users u WHERE u.telegram_id=$1",[ctx.from.id]);
     const row=rows[0];
     if(!row)return ctx.reply("Open Pocket Near to connect your wallet.");
-    const body=row.body as {freeze?:boolean}|null;
-    return ctx.reply(`Wallet: ${row.account_id??"not connected"}\nPolicy: ${row.active&&!body?.freeze?"active":"frozen or inactive"}\nMode: ${row.agent_mode}\nMonitoring: ${row.agent_enabled?"on":"off"}\nMaster lock: ${row.master_lock?"on":"off"}\nAuto execution lock: ${row.auto_exec_lock?"on":"off"}`,Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]]));
+    const policyCount=Number(row.policy_count),activePolicyCount=Number(row.active_policy_count);
+    const policyStatus=policyCount?`${activePolicyCount}/${policyCount} active`:"none saved";
+    return ctx.reply(`Wallet: ${row.account_id??"not connected"}\nPolicies: ${policyStatus}\nMode: ${row.agent_mode}\nMonitoring: ${row.agent_enabled?"on":"off"}\nMaster lock: ${row.master_lock?"on":"off"}\nAuto execution lock: ${row.auto_exec_lock?"on":"off"}`,Markup.inlineKeyboard([[Markup.button.webApp("Open Pocket Near",env.PUBLIC_APP_URL)]]));
   });
   bot.catch(error=>console.error("Telegram bot update failed",error));
   return bot;

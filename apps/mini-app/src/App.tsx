@@ -17,6 +17,7 @@ const DiscoverSections=lazy(()=>import("./components/DiscoverSections.js").then(
 const PolicyEditor=lazy(()=>import("./components/PolicyEditor.js").then(module=>({default:module.PolicyEditor})));
 
 type Tab="Home"|"Swap"|"Activity"|"Explore"|"Profile";
+type SavedPolicy=Awaited<ReturnType<typeof api.policy>>["policies"][number];
 type InvestmentPreferences={alertsEnabled:boolean;symbols:string[];positionMonitoring:boolean;reportFrequency:number;lastSuggestionAt:string|null;nextPositionReportAt:string|null};
 type TrackedPosition={id:string;tokenId:string;symbol:string;amount:string;decimals:number;valueUsd:number|null;kind:"deposit"|"rnear_staked"|"rnear_balance"|"rnear_pending";nearEquivalent:string|null;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null};
 type RNearStatus={apyPct:number|null;ftPrice:number|null;stakedNear:string;pendingNear:string;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null;source:string;observedAt:string};
@@ -51,6 +52,8 @@ export default function App(){
   const [nativeBalance,setNativeBalance]=useState<string|null>(null);
   const [portfolioError,setPortfolioError]=useState("");
   const [assets,setAssets]=useState<Asset[]>([]);
+  const [policies,setPolicies]=useState<SavedPolicy[]>([]);
+  const [editingPolicyId,setEditingPolicyId]=useState<string|null>(null);
   const [policy,setPolicy]=useState<AgentPolicy|null>(null);
   const [policyActive,setPolicyActive]=useState(false);
   const [passwordSet,setPasswordSet]=useState(false);
@@ -118,6 +121,8 @@ export default function App(){
   const [now,setNow]=useState(()=>Date.now());
   const [watchLoading,setWatchLoading]=useState(false);
   const [executionStatus,setExecutionStatus]=useState<{kind:"submitted"|"error";message:string;txHash?:string}|null>(null);
+  const activePolicyCount=policies.filter(saved=>saved.active).length;
+  const editorPolicy=policies.find(saved=>saved.id===editingPolicyId)?.body??policy;
   const from=useMemo(()=>assets.find(a=>a.assetId===fromId),[assets,fromId]);
   const to=useMemo(()=>assets.find(a=>a.assetId===toId),[assets,toId]);
   const rheaRiskAssets=quote?.provider==="rhea"?[quote.originAsset,quote.destinationAsset].map(assetId=>memeBoard.assets.find(asset=>asset.assetId===assetId)??null):[];
@@ -149,10 +154,11 @@ export default function App(){
     }else setAccount(null);
     const [assetData,policyData,eventData,alertData,investmentData]=await Promise.all([api.assets(),api.policy(),api.events(),api.alerts(),api.investmentPreferences()]);
     const sorted=assetData.assets.sort((a,b)=>a.symbol.localeCompare(b.symbol));
-    setAssets(sorted);setAssetsReady(true);setPolicy(policyData.policy?.body??null);setPolicyActive(policyData.policy?.active??false);setEvents(eventData.events);setAlerts(alertData.alerts);setInvestmentPrefs(investmentData.preferences);
-    setDestinationInput(policyData.policy?.body.allowedDestinations.join(", ")??me.accountId??"");
-    if(policyData.policy?.body){const saved=policyData.policy.body;const primary=saved.allowedPairs[0];const savedFrom=sorted.find(a=>a.assetId===primary?.from);setPolicyPairs(saved.allowedPairs);if(primary){setFromId(primary.from);setToId(primary.to);}if(savedFrom){setMaxTrade(fmt(saved.maxTradeAmount,savedFrom.decimals));setDaily(fmt(saved.dailyLimit,savedFrom.decimals));setWeekly(fmt(saved.weeklyLimit,savedFrom.decimals));}setMaxSlippage(String(saved.maxSlippageBps));if(saved.timeWindows[0]){setWindowStart(saved.timeWindows[0].start);setWindowEnd(saved.timeWindows[0].end);}}
-    if(sorted.length){const defaultFrom=sorted.find(a=>a.symbol.toLowerCase().includes("near"))?.assetId||sorted[0]!.assetId;const defaultTo=sorted.find(a=>a.symbol.toLowerCase().includes("usdc"))?.assetId||sorted[Math.min(1,sorted.length-1)]!.assetId;setFromId(current=>current||defaultFrom);setToId(current=>current||defaultTo);if(!policyData.policy?.body)setPolicyPairs([{from:defaultFrom,to:defaultTo}]);}
+    const newestPolicy=policyData.policies[0]?.body;
+    setAssets(sorted);setAssetsReady(true);setPolicies(policyData.policies);setPolicy(newestPolicy??null);setPolicyActive(policyData.policies.some(saved=>saved.active));setEvents(eventData.events);setAlerts(alertData.alerts);setInvestmentPrefs(investmentData.preferences);
+    setDestinationInput(newestPolicy?.allowedDestinations.join(", ")??me.accountId??"");
+    if(newestPolicy){const saved=newestPolicy;const primary=saved.allowedPairs[0];const savedFrom=sorted.find(a=>a.assetId===primary?.from);setPolicyPairs(saved.allowedPairs);if(primary){setFromId(primary.from);setToId(primary.to);}if(savedFrom){setMaxTrade(fmt(saved.maxTradeAmount,savedFrom.decimals));setDaily(fmt(saved.dailyLimit,savedFrom.decimals));setWeekly(fmt(saved.weeklyLimit,savedFrom.decimals));}setMaxSlippage(String(saved.maxSlippageBps));if(saved.timeWindows[0]){setWindowStart(saved.timeWindows[0].start);setWindowEnd(saved.timeWindows[0].end);}}
+    if(sorted.length){const defaultFrom=sorted.find(a=>a.symbol.toLowerCase().includes("near"))?.assetId||sorted[0]!.assetId;const defaultTo=sorted.find(a=>a.symbol.toLowerCase().includes("usdc"))?.assetId||sorted[Math.min(1,sorted.length-1)]!.assetId;setFromId(current=>current||defaultFrom);setToId(current=>current||defaultTo);if(!newestPolicy)setPolicyPairs([{from:defaultFrom,to:defaultTo}]);}
   },[]);
 
   useEffect(()=>{
@@ -231,8 +237,14 @@ export default function App(){
 
   const savePassword=async(value:string)=>{await api.savePassword(value);setPasswordSet(true);setNotice("Unlock password saved.");try{const me=await api.me();setPasswordSet(me.passwordSet);}catch{/* Password was saved successfully; the next dashboard refresh rechecks auth state. */}};
   const requestUnlock=(reason:string,action:(password:string,onWallet:()=>void)=>Promise<void>)=>{setUnlockReason(reason);setUnlockAction(()=>action);};
+  const refreshPolicies=async()=>{
+    const result=await api.policy();
+    setPolicies(result.policies);setPolicy(result.policies[0]?.body??null);setPolicyActive(result.policies.some(saved=>saved.active));
+    return result.policies;
+  };
 
   const buildPolicy=():AgentPolicy=>{
+    const policyBeingEdited=policies.find(saved=>saved.id===editingPolicyId);
     if(!account||!policyPairs.length)throw new Error("Connect a wallet and add at least one policy pair first.");
     if(!passwordSet)throw new Error("Create an unlock password before signing a policy.");
     if(policyPairs.length>30)throw new Error("A policy can include at most 30 pairs.");
@@ -252,47 +264,68 @@ export default function App(){
     if(!Number.isInteger(slippageBps)||slippageBps<1||slippageBps>500)throw new Error("Maximum slippage must be between 1 and 500 basis points.");
     const allowedPairs=policyPairs.map(pair=>({...pair}));
     if(allowedPairs.some(pair=>pair.from.startsWith("near:")!==pair.to.startsWith("near:")))throw new Error("Rhea-only NEAR pool assets can only be paired with another Rhea pool asset in a signed policy.");
-    const savedWindows=policy?.timeWindows??[DEFAULT_WINDOW];
-    const next:AgentPolicy={version:1,accountId:account.accountId,allowedPairs,maxTradeAmount:toBase(maxTrade,limitAsset.decimals),dailyLimit:toBase(daily,limitAsset.decimals),weeklyLimit:toBase(weekly,limitAsset.decimals),allowedDestinations,timeWindows:[{...savedWindows[0]!,start:windowStart,end:windowEnd},...savedWindows.slice(1)],maxSlippageBps:slippageBps,freeze:false,updatedAt:new Date().toISOString()};
+    const savedWindows=editorPolicy?.timeWindows??[DEFAULT_WINDOW];
+    const next:AgentPolicy={version:1,accountId:account.accountId,allowedPairs,maxTradeAmount:toBase(maxTrade,limitAsset.decimals),dailyLimit:toBase(daily,limitAsset.decimals),weeklyLimit:toBase(weekly,limitAsset.decimals),allowedDestinations,timeWindows:[{...savedWindows[0]!,start:windowStart,end:windowEnd},...savedWindows.slice(1)],maxSlippageBps:slippageBps,freeze:policyBeingEdited?.body.freeze??false,updatedAt:new Date().toISOString()};
     return next;
   };
-  const savePolicy=async(unlockPassword:string,next:AgentPolicy,challenge:Awaited<ReturnType<typeof api.challenge>>,onWallet:()=>void)=>{
+  const savePolicy=async(unlockPassword:string,next:AgentPolicy,challenge:Awaited<ReturnType<typeof api.challenge>>,onWallet:()=>void,policyId?:string)=>{
     await api.verifyUnlock(unlockPassword);
     onWallet();
     const message=`Pocket Near policy authorization\nAccount: ${next.accountId}\nNonce: ${challenge.nonce}\nPolicy: ${canonicalPolicy(next)}`;
     const signed=await signPolicy(message,challenge.recipient,challenge.nonce);
-    await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword);
-    setPolicy(next);clearActiveQuote();setNotice("Policy saved and signed by your wallet. Request a fresh quote under the updated policy.");
-    setPolicyActive(true);
+    await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword,policyId);
+    await refreshPolicies();setEditingPolicyId(null);clearActiveQuote();setNotice(policyId?"Policy updated and signed by your wallet.":"Policy added and signed by your wallet. Any active policy may authorize a swap.");
   };
   const requestPolicySave=async()=>{
     setBusy(true);setError("");
     try{
+      const policyId=editingPolicyId??undefined;
+      if(!policyId&&policies.length>=3)throw new Error("You can keep up to three policies. Delete one before adding another.");
       const next=buildPolicy();
       const challenge=await api.challenge(next.accountId);
-      requestUnlock("Unlock to authorize this policy change",(password,onWallet)=>savePolicy(password,next,challenge,onWallet));
+      requestUnlock(policyId?"Unlock to authorize changes to this policy":"Unlock to add a new signed policy",(password,onWallet)=>savePolicy(password,next,challenge,onWallet,policyId));
     }catch(e){setError(e instanceof Error?e.message:"Policy details are invalid.");}
     finally{setBusy(false);}
   };
+  const editPolicy=(saved:SavedPolicy)=>{
+    const body=saved.body;
+    const primary=body.allowedPairs[0];
+    const origin=assets.find(asset=>asset.assetId===primary?.from);
+    setEditingPolicyId(saved.id);setPolicyPairs(body.allowedPairs);
+    if(primary){setFromId(primary.from);setToId(primary.to);}
+    if(origin){setMaxTrade(fmt(body.maxTradeAmount,origin.decimals));setDaily(fmt(body.dailyLimit,origin.decimals));setWeekly(fmt(body.weeklyLimit,origin.decimals));}
+    setMaxSlippage(String(body.maxSlippageBps));setDestinationInput(body.allowedDestinations.join(", "));
+    if(body.timeWindows[0]){setWindowStart(body.timeWindows[0].start);setWindowEnd(body.timeWindows[0].end);}
+  };
 
-  const toggleFreeze=async(unlockPassword:string,next:AgentPolicy,challenge:Awaited<ReturnType<typeof api.challenge>>,onWallet:()=>void)=>{
+  const toggleFreeze=async(unlockPassword:string,next:AgentPolicy,challenge:Awaited<ReturnType<typeof api.challenge>>,onWallet:()=>void,policyId:string)=>{
     await api.verifyUnlock(unlockPassword);
     onWallet();
     const message=`Pocket Near policy authorization\nAccount: ${next.accountId}\nNonce: ${challenge.nonce}\nPolicy: ${canonicalPolicy(next)}`;
     const signed=await signPolicy(message,challenge.recipient,challenge.nonce);
-    await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword);
-    setPolicy(next);clearActiveQuote();setAgentOn(!next.freeze);setNotice(next.freeze?"Emergency freeze is active.":"Policy updated; request a fresh quote under the updated policy.");
-    setPolicyActive(!next.freeze);
+    await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword,policyId);
+    const updatedPolicies=await refreshPolicies();
+    if(!updatedPolicies.some(saved=>saved.active))setAgentOn(false);
+    clearActiveQuote();setNotice(next.freeze?"Policy frozen. Other active policies remain in force.":"Policy resumed. All active policies apply to swaps.");
   };
-  const requestFreeze=async()=>{
-    if(!policy)return;
+  const requestFreeze=async(saved:SavedPolicy)=>{
     setBusy(true);setError("");
     try{
-      const next={...policy,freeze:!policy.freeze,updatedAt:new Date().toISOString()};
-      const challenge=await api.challenge(policy.accountId);
-      requestUnlock(policy.freeze?"Unlock to resume the agent":"Unlock to update the signed policy and activate emergency freeze",(password,onWallet)=>toggleFreeze(password,next,challenge,onWallet));
+      const next={...saved.body,freeze:saved.active,updatedAt:new Date().toISOString()};
+      const challenge=await api.challenge(next.accountId);
+      requestUnlock(saved.active?"Unlock to freeze this policy":"Unlock to resume this policy",(password,onWallet)=>toggleFreeze(password,next,challenge,onWallet,saved.id));
     }catch(e){setError(e instanceof Error?e.message:"Could not prepare the policy signature.");}
     finally{setBusy(false);}
+  };
+  const requestDeletePolicy=(policyId:string)=>{
+    if(!window.confirm("Delete this saved policy? It will no longer limit swaps, and this cannot be undone."))return;
+    requestUnlock("Unlock with your password to delete this policy.",async password=>{
+      await api.deletePolicy(policyId,password);
+      const remaining=await refreshPolicies();
+      setEditingPolicyId(current=>current===policyId?null:current);
+      if(!remaining.some(saved=>saved.active))setAgentOn(false);
+      clearActiveQuote();setNotice("Policy deleted. Other saved policies are unchanged.");
+    });
   };
 
   const runAgent=async()=>{if(!quote)return;setError("");setBusy(true);try{const result=await api.evaluate(quote.id,true);setDecision(result.decision);if(result.decision.allowed)setNotice("Policy check passed. Review the deposit details before continuing.");}catch(e){setError(e instanceof Error?e.message:"Could not evaluate this request.");}finally{setBusy(false);}};
@@ -398,7 +431,7 @@ export default function App(){
   };
   const refreshInvestmentOpportunities=async()=>{try{const result=await api.investmentOpportunities();setInvestmentOpportunities(result.pools);setInvestmentOpportunitySource(result.source);setInvestmentOpportunityDisclaimer(result.disclaimer);setYieldOverview(result.yields);}catch(e){setInvestmentOpportunitySource(e instanceof Error?e.message:"Opportunity data is temporarily unavailable.");}};
   const saveInvestmentPrefs=async()=>{setSavingInvestmentPrefs(true);try{const result=await api.saveInvestmentPreferences({alertsEnabled:investmentPrefs.alertsEnabled,symbols:investmentPrefs.symbols,positionMonitoring:investmentPrefs.positionMonitoring,reportFrequency:investmentPrefs.reportFrequency});setInvestmentPrefs(result.preferences);setNotice("Investment alerts and position reporting settings saved.");}catch(e){setError(e instanceof Error?e.message:"Could not save investment settings.");}finally{setSavingInvestmentPrefs(false);}};
-  const safeToggleAgent=async()=>{if(!policy||!policyActive){setError("Sign an active policy before activating the agent.");setTab("Profile");return;}if(policy.freeze){setError("Emergency freeze is active. Sign an updated policy to resume.");return;}try{const next=!agentOn;await api.agentSettings({agentEnabled:next});setAgentOn(next);setNotice(next?"Agent monitoring. Matches are notified on Telegram.":"Agent paused.");}catch(e){setError(e instanceof Error?e.message:"Could not update agent state.");}};
+  const safeToggleAgent=async()=>{if(!policy||!policyActive){setError("Sign at least one active policy before activating the agent.");setTab("Profile");return;}try{const next=!agentOn;await api.agentSettings({agentEnabled:next});setAgentOn(next);setNotice(next?"Agent monitoring. Matches are notified on Telegram.":"Agent paused.");}catch(e){setError(e instanceof Error?e.message:"Could not update agent state.");}};
   const toggleMasterLock=async(unlockPassword?:string)=>{const next=!masterLock;const settings=await api.agentSettings({masterLock:next,...(unlockPassword?{password:unlockPassword}:{})});setMasterLock(settings.masterLock);setNotice(next?"Agent locked.":"Agent unlocked.");};
 
   const loadPrices=async()=>{setWatchLoading(true);try{const [market,watch,alertData]=await Promise.all([api.prices(),api.watchlist(),api.alerts()]);setPrices(market.rows);setPriceSource(market.source);setWatchlist(watch.symbols);setAlerts(alertData.alerts);}catch(e){setError(e instanceof Error?e.message:"Market data could not be loaded.");}finally{setWatchLoading(false);}};
@@ -505,14 +538,14 @@ export default function App(){
         <section className="page-title"><p className="eyebrow">YOUR ACCOUNT</p><h1>Profile</h1><p>Your wallet, signed policy and safety controls.</p></section>
         <section className="profile-card"><p className="eyebrow">WALLET</p><h2>{account?"Connected wallet":"No wallet connected"}</h2><strong>{profileAccountId??"Connect a NEAR wallet to sign in"}</strong><span>{account?<>Unlocked native balance: {nativeBalance!==null?`${nativeBalance} NEAR`:portfolioError||"Loading balance…"}. Your NEAR account ID is your Pocket Near identity.</>:"Connect your wallet to manage policies and personal settings."}</span>{account?<button className="subtle-button" disabled={busy} onClick={()=>void disconnect()}>Disconnect wallet</button>:<button className="secondary-button" disabled={busy} onClick={()=>void connect()}>Connect wallet <ArrowRight size={14}/></button>}</section>
         <div className="section-heading compact"><div><p className="eyebrow">PROFILE · SAFETY</p><h2>Safety</h2></div><ShieldAlert size={17}/></div>
-        <Suspense fallback={<div className="empty-activity">Loading safety settings…</div>}><PolicyEditor assets={assets} accountId={profileAccountId} pairs={policyPairs} onPairsChange={setPolicyPairs} defaultFrom={fromId} defaultTo={toId} maxTrade={maxTrade} setMaxTrade={setMaxTrade} daily={daily} setDaily={setDaily} weekly={weekly} setWeekly={setWeekly} maxSlippage={maxSlippage} setMaxSlippage={setMaxSlippage} destinationInput={destinationInput} setDestinationInput={setDestinationInput} windowStart={windowStart} setWindowStart={setWindowStart} windowEnd={windowEnd} setWindowEnd={setWindowEnd} activeDaysLabel={policy?.timeWindows[0]?.days.length===7?"Every day":policy?.timeWindows[0]?.days.map(day=>ASSET_DAYS[day]).join(", ")??"Every day"} additionalWindowCount={Math.max(0,(policy?.timeWindows.length??1)-1)} timezone={policy?.timeWindows[0]?.timezone??DEFAULT_WINDOW.timezone} busy={busy} passwordSet={passwordSet} canSign={Boolean(account)} hasPolicy={Boolean(policy)} frozen={Boolean(policy?.freeze)} onSign={requestPolicySave} onFreeze={requestFreeze}/></Suspense>
+        <Suspense fallback={<div className="empty-activity">Loading safety settings…</div>}><PolicyEditor policies={policies} assets={assets} accountId={profileAccountId} pairs={policyPairs} onPairsChange={setPolicyPairs} defaultFrom={fromId} defaultTo={toId} maxTrade={maxTrade} setMaxTrade={setMaxTrade} daily={daily} setDaily={setDaily} weekly={weekly} setWeekly={setWeekly} maxSlippage={maxSlippage} setMaxSlippage={setMaxSlippage} destinationInput={destinationInput} setDestinationInput={setDestinationInput} windowStart={windowStart} setWindowStart={setWindowStart} windowEnd={windowEnd} setWindowEnd={setWindowEnd} activeDaysLabel={editorPolicy?.timeWindows[0]?.days.length===7?"Every day":editorPolicy?.timeWindows[0]?.days.map(day=>ASSET_DAYS[day]).join(", ")??"Every day"} additionalWindowCount={Math.max(0,(editorPolicy?.timeWindows.length??1)-1)} timezone={editorPolicy?.timeWindows[0]?.timezone??DEFAULT_WINDOW.timezone} busy={busy} passwordSet={passwordSet} canSign={Boolean(account)} editingPolicyId={editingPolicyId} onSign={requestPolicySave} onEdit={editPolicy} onCancelEdit={()=>setEditingPolicyId(null)} onFreeze={requestFreeze} onDelete={requestDeletePolicy}/></Suspense>
         <section className="page-title"><h2>Agent monitoring</h2><p>Safety checks apply to policy-controlled swaps; every on-chain transaction still requires your wallet.</p></section>
         {!account&&<div className="alert info"><Wallet size={17}/>Connect your wallet before creating a signed policy.</div>}
         {!passwordSet&&<CreatePasswordCard onCreate={savePassword}/>}
-        {policy&&<section className="signed-note"><Check size={15}/><span>Current policy is signed on {new Date(policy.updatedAt).toLocaleString()} for <b>{short(policy.accountId)}</b>.</span></section>}
+        {policies.length>0&&<section className="signed-note"><Check size={15}/><span>{policies.length} wallet-signed polic{policies.length===1?"y":"ies"} for <b>{short(policy?.accountId??"")}</b>. They remain saved until deleted.</span></section>}
         <div className="security-note"><CircleHelp size={17}/><p>Policy limits are enforced by Pocket Near's backend before an action is prepared. The NEAR Intents Verifier authorizes every registered key to act on the account; this app does not keep a delegated key or claim on-chain policy enforcement.</p></div>
         <div className="section-heading compact"><div><p className="eyebrow">MY AGENT</p><h2>Agent status</h2></div><button className="icon-button light" aria-label="Refresh events" onClick={()=>void refreshEvents()}><RefreshCw size={15}/></button></div>
-        <section className="agent-card"><div className="agent-head"><div className="agent-orb"><Bot size={19}/></div><div className="agent-title"><span>MY TRADING AGENT</span><strong>{masterLock?"Locked":policy?.freeze?"Frozen":agentOn?"Notify only":"Off"}</strong></div></div><p className="agent-copy">Monitoring: {agentOn?"on":"off"} · Policy: {policy?.freeze?"frozen":"active"}</p><div className="agent-footer"><button onClick={()=>void safeToggleAgent()}>{agentOn?"Pause monitoring":"Start monitoring"}</button></div><div className="agent-footer"><button onClick={()=>masterLock?requestUnlock("Unlock the master lock to resume agent monitoring",p=>toggleMasterLock(p)):void toggleMasterLock()}>{masterLock?"Unlock agent":"Lock agent now"}</button></div><div className="agent-footer"><button onClick={()=>{setTab("Swap");document.querySelector(".quote-card")?.scrollIntoView({behavior:"smooth"});}}>Open Swap quote <ArrowRight size={14}/></button><button onClick={()=>{const json=JSON.stringify(policy??{version:1,allowedPairs:[],maxTradeAmount:"0",dailyLimit:"0",weeklyLimit:"0",allowedDestinations:[],timeWindows:[],maxSlippageBps:100,freeze:false},null,2);const link=document.createElement("a");link.href=URL.createObjectURL(new Blob([json],{type:"application/json"}));link.download="pocket-near-policy-template.json";link.click();URL.revokeObjectURL(link.href);}}>Export template <ExternalLink size={13}/></button></div></section>
+        <section className="agent-card"><div className="agent-head"><div className="agent-orb"><Bot size={19}/></div><div className="agent-title"><span>MY TRADING AGENT</span><strong>{masterLock?"Locked":policies.length>0&&activePolicyCount===0?"All policies frozen":agentOn?"Notify only":"Off"}</strong></div></div><p className="agent-copy">Monitoring: {agentOn?"on":"off"} · Policies: {activePolicyCount}/{policies.length} active</p><div className="agent-footer"><button onClick={()=>void safeToggleAgent()}>{agentOn?"Pause monitoring":"Start monitoring"}</button></div><div className="agent-footer"><button onClick={()=>masterLock?requestUnlock("Unlock the master lock to resume agent monitoring",p=>toggleMasterLock(p)):void toggleMasterLock()}>{masterLock?"Unlock agent":"Lock agent now"}</button></div><div className="agent-footer"><button onClick={()=>{setTab("Swap");document.querySelector(".quote-card")?.scrollIntoView({behavior:"smooth"});}}>Open Swap quote <ArrowRight size={14}/></button><button onClick={()=>{const json=JSON.stringify(policy??{version:1,allowedPairs:[],maxTradeAmount:"0",dailyLimit:"0",weeklyLimit:"0",allowedDestinations:[],timeWindows:[],maxSlippageBps:100,freeze:false},null,2);const link=document.createElement("a");link.href=URL.createObjectURL(new Blob([json],{type:"application/json"}));link.download="pocket-near-policy-template.json";link.click();URL.revokeObjectURL(link.href);}}>Export template <ExternalLink size={13}/></button></div></section>
         <details className="profile-advanced"><summary>Advanced: Rhea monitoring and safety log</summary>
         <section className="form-card investment-settings">
           <div className="section-heading compact"><div><p className="eyebrow">POSITION MONITORING</p><h2>Monitoring settings</h2></div><TrendingUp size={17}/></div>

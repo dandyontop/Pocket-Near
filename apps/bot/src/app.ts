@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -6,7 +7,7 @@ import compression from "compression";
 import cookieParser from "cookie-parser";
 import { rateLimit } from "express-rate-limit";
 import { z } from "zod";
-import { canonicalPolicy, checkPolicy, intentSwapSchema, intentSwapStatusSchema, policySchema, quoteInputSchema, type IntentSwap, type IntentSwapStatus, type QuoteView } from "@pocket-near/shared";
+import { canonicalPolicy, checkPolicy, intentSwapSchema, intentSwapStatusSchema, policySchema, quoteInputSchema, type AgentPolicy, type IntentSwap, type IntentSwapStatus, type QuoteView } from "@pocket-near/shared";
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, makeUserSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
@@ -258,10 +259,9 @@ type AgentRuntime={master_lock:boolean;agent_enabled:boolean;agent_mode:string};
 type QuotePolicyEvaluation={decision?:{allowed:boolean;reason?:string};error?:{status:number;message:string}};
 async function evaluateQuoteForUser(userId:number,quote:QuoteView,runtime:AgentRuntime,recordPreview:boolean):Promise<QuotePolicyEvaluation>{
   if(runtime.master_lock)return {error:{status:423,message:"Agent is locked."}};
-  const {rows}=await pool.query<{body:unknown;active:boolean}>("SELECT body,active FROM policies WHERE user_id=$1",[userId]);
-  if(!rows[0]?.active)return {error:{status:409,message:"No active signed policy is available."}};
-  const policy=policySchema.parse(rows[0].body);
-  if(policy.freeze)return {error:{status:423,message:"Emergency freeze active."}};
+  const {rows}=await pool.query<{body:unknown}>("SELECT body FROM policies WHERE user_id=$1 AND active=true ORDER BY created_at,id",[userId]);
+  if(!rows.length)return {error:{status:409,message:"No active signed policy is available."}};
+  const policies=rows.map(row=>policySchema.parse(row.body));
   const now=new Date();
   const dayKey=now.toISOString().slice(0,10);
   const weekKey=`${now.getUTCFullYear()}-${Math.ceil((Number(dayKey.slice(5,7))*31+Number(dayKey.slice(8,10)))/7)}`;
@@ -269,7 +269,9 @@ async function evaluateQuoteForUser(userId:number,quote:QuoteView,runtime:AgentR
     COALESCE(sum((details->>'amountIn')::numeric) FILTER (WHERE created_at::date=now()::date),0)::text AS day_amount,
     COALESCE(sum((details->>'amountIn')::numeric) FILTER (WHERE created_at >= date_trunc('week',now())),0)::text AS week_amount
     FROM execution_events WHERE user_id=$1 AND event_type IN ('submitted','success')`,[userId]);
-  const decision=checkPolicy(policy,{dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey,weekKey},quote,now);
+  const policyUsage={dayAmount:usage.rows[0]?.day_amount??"0",weekAmount:usage.rows[0]?.week_amount??"0",dayKey,weekKey};
+  const decisions=policies.map(policy=>checkPolicy(policy,policyUsage,quote,now));
+  const decision=decisions.find(result=>result.allowed)??decisions[0]!;
   const details=JSON.stringify({quoteId:quote.id,amountIn:quote.amountIn,reason:decision.allowed?null:decision.reason});
   if(decision.allowed&&recordPreview)await pool.query("INSERT INTO execution_events(user_id,event_type,details) VALUES($1,'preview',$2)",[userId,details]);
   if(!decision.allowed)await pool.query("INSERT INTO execution_events(user_id,event_type,details) SELECT $1,'blocked',$2 WHERE NOT EXISTS(SELECT 1 FROM execution_events WHERE user_id=$1 AND event_type='blocked' AND details->>'quoteId'=$3 AND created_at>now()-interval '5 minutes')",[userId,details,quote.id]);
@@ -299,9 +301,13 @@ app.get("/api/auth/me",requireSession,asyncRoute(async (req,res) => {
   res.json({ accountId:rows[0]?.account_id ?? null,passwordSet:rows[0]?.password_set ?? false,agentEnabled:rows[0]?.agent_enabled??false,autoEnabled:rows[0]?.auto_enabled??false });
 }));
 app.get("/api/agent/status",requireSession,asyncRoute(async(req,res)=>{
-  const {rows}=await pool.query<any>(`SELECT u.agent_enabled,u.agent_mode,u.master_lock,u.auto_exec_lock,u.last_run_at,u.last_error,(u.password_hash IS NOT NULL) password_set,p.active policy_active,p.body FROM users u LEFT JOIN policies p ON p.user_id=u.id WHERE u.id=$1`,[req.userId]);const r=rows[0];
+  const {rows}=await pool.query<any>(`SELECT u.agent_enabled,u.agent_mode,u.master_lock,u.auto_exec_lock,u.last_run_at,u.last_error,(u.password_hash IS NOT NULL) password_set,
+    EXISTS(SELECT 1 FROM policies p WHERE p.user_id=u.id AND p.active=true) policy_active,
+    COALESCE((SELECT bool_and(NOT p.active) FROM policies p WHERE p.user_id=u.id),false) freeze,
+    (SELECT p.body FROM policies p WHERE p.user_id=u.id ORDER BY p.created_at DESC,p.id DESC LIMIT 1) body
+    FROM users u WHERE u.id=$1`,[req.userId]);const r=rows[0];
   const events=await pool.query("SELECT event_type,details,created_at FROM execution_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT 10",[req.userId]);
-  res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:r.auto_exec_lock,freeze:Boolean(r.body?.freeze),passwordSet:r.password_set,policyActive:Boolean(r.policy_active),lastRunAt:r.last_run_at,lastError:r.last_error,policy:r.body??null,lastEvents:events.rows});
+  res.json({agentEnabled:r.agent_enabled,mode:r.agent_mode,masterLock:r.master_lock,autoExecLock:r.auto_exec_lock,freeze:Boolean(r.freeze),passwordSet:r.password_set,policyActive:Boolean(r.policy_active),lastRunAt:r.last_run_at,lastError:r.last_error,policy:r.body??null,lastEvents:events.rows});
 }));
 app.put("/api/agent/settings",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({agentEnabled:z.boolean().optional(),mode:z.enum(["off","notify_only"]).optional(),masterLock:z.boolean().optional(),password:z.string().min(10).max(128).optional()}).refine(v=>v.agentEnabled!==undefined||v.mode!==undefined||v.masterLock!==undefined).parse(req.body);
@@ -367,8 +373,24 @@ app.post("/api/security/verify",requireSession,asyncRoute(async(req,res)=>{
 }));
 
 app.get("/api/policy",requireSession,asyncRoute(async (req,res) => {
-  const {rows} = await pool.query("SELECT body,signature,active,updated_at FROM policies WHERE user_id=$1",[req.userId]);
-  res.json({ policy:rows[0] ?? null });
+  const {rows} = await pool.query<{id:string;body:AgentPolicy;active:boolean;created_at:Date;updated_at:Date}>("SELECT id,body,active,created_at,updated_at FROM policies WHERE user_id=$1 ORDER BY created_at DESC,id DESC",[req.userId]);
+  res.json({ policies:rows.map(row=>({id:row.id,body:row.body,active:row.active,createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()})) });
+}));
+app.delete("/api/policy/:id",requireSession,asyncRoute(async(req,res)=>{
+  if(!await requirePassword(req))return fail(res,403,"Unlock with your password before deleting the policy.");
+  const policyId=z.string().regex(/^[1-9]\d{0,18}$/).safeParse(req.params.id);
+  if(!policyId.success)return fail(res,400,"Policy ID is invalid.");
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,1))",[String(req.userId)]);
+    const deleted=await client.query("DELETE FROM policies WHERE id=$1 AND user_id=$2 RETURNING id",[policyId.data,req.userId]);
+    if(!deleted.rowCount){await client.query("ROLLBACK");return fail(res,404,"Policy was not found.");}
+    await client.query("DELETE FROM policy_signing_challenges WHERE user_id=$1",[req.userId]);
+    await client.query("UPDATE users SET agent_enabled=false,agent_mode='off',auto_enabled=false,updated_at=now() WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM policies WHERE user_id=$1 AND active=true)",[req.userId]);
+    await client.query("COMMIT");
+    res.json({deleted:true});
+  }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 }));
 app.post("/api/policy/challenge",requireSession,asyncRoute(async (req,res) => {
   const { accountId } = z.object({accountId:z.string().min(2).max(128)}).parse(req.body);
@@ -379,23 +401,35 @@ app.post("/api/policy/challenge",requireSession,asyncRoute(async (req,res) => {
   res.json({message,recipient:"Pocket Near",nonce:nonceBase64});
 }));
 app.put("/api/policy",requireSession,asyncRoute(async (req,res) => {
-  const parsed = z.object({policy:policySchema,envelope:z.object({accountId:z.string(),publicKey:z.string(),signature:z.string(),payload:z.object({message:z.string(),recipient:z.string(),nonce:z.string()})})}).safeParse(req.body);
+  const parsed = z.object({policyId:z.string().regex(/^[1-9]\d{0,18}$/).optional(),policy:policySchema,envelope:z.object({accountId:z.string(),publicKey:z.string(),signature:z.string(),payload:z.object({message:z.string(),recipient:z.string(),nonce:z.string()})})}).safeParse(req.body);
   if (!parsed.success) return fail(res,400,"Policy payload is invalid.");
   if (!await requirePassword(req)) return fail(res,403,"Unlock with your password before changing the policy.");
   const {policy,envelope} = parsed.data;
   if (policy.accountId !== envelope.accountId || policy.accountId !== (await pool.query("SELECT account_id FROM users WHERE id=$1",[req.userId])).rows[0]?.account_id) return fail(res,403,"Policy account does not match the connected wallet.");
-  const canonical = canonicalPolicy(policy);
-  const expected = `Pocket Near policy authorization\nAccount: ${policy.accountId}\nNonce: ${envelope.payload.nonce}\nPolicy: ${canonical}`;
+  const messagePrefix=`Pocket Near policy authorization\nAccount: ${policy.accountId}\nNonce: ${envelope.payload.nonce}\nPolicy: `;
+  if(!envelope.payload.message.startsWith(messagePrefix))return fail(res,403,"Signed message does not match the submitted policy.");
+  let signedPolicyValue:unknown;
+  try{signedPolicyValue=JSON.parse(envelope.payload.message.slice(messagePrefix.length));}catch{return fail(res,403,"Signed message does not contain a valid policy.");}
+  const signedPolicy=policySchema.safeParse(signedPolicyValue);
+  if(!signedPolicy.success||!isDeepStrictEqual(signedPolicyValue,signedPolicy.data)||canonicalPolicy(signedPolicy.data)!==canonicalPolicy(policy))return fail(res,403,"Signed message does not match the submitted policy.");
   const challenge=await pool.query<{nonce:string}>("SELECT nonce FROM policy_signing_challenges WHERE user_id=$1 AND expires_at>now()",[req.userId]);
   if(challenge.rows[0]?.nonce!==envelope.payload.nonce)return fail(res,403,"Policy signing challenge is missing, expired, or already used.");
-  if(envelope.payload.message!==expected)return fail(res,403,"Signed message does not match the submitted policy.");
   try{await verifyPolicySignature(envelope);}catch{return fail(res,403,"Wallet signature could not be verified.");}
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,1))",[String(req.userId)]);
     const consumed=await client.query("DELETE FROM policy_signing_challenges WHERE user_id=$1 AND nonce=$2 AND expires_at>now() RETURNING nonce",[req.userId,envelope.payload.nonce]);
     if(!consumed.rowCount){await client.query("ROLLBACK");return fail(res,403,"Policy signing challenge is missing, expired, or already used.");}
-    await client.query("INSERT INTO policies(user_id,body,signature,signer_public_key,signed_message,signed_nonce,active) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id) DO UPDATE SET body=EXCLUDED.body,signature=EXCLUDED.signature,signer_public_key=EXCLUDED.signer_public_key,signed_message=EXCLUDED.signed_message,signed_nonce=EXCLUDED.signed_nonce,active=true,updated_at=now()",[req.userId,JSON.stringify(policy),JSON.stringify(envelope),envelope.publicKey,expected,Buffer.from(envelope.payload.nonce,"base64"),!policy.freeze]);
+    if(parsed.data.policyId){
+      const updated=await client.query("UPDATE policies SET body=$1,signature=$2,signer_public_key=$3,signed_message=$4,signed_nonce=$5,active=$6,updated_at=now() WHERE id=$7 AND user_id=$8 RETURNING id",[JSON.stringify(policy),JSON.stringify(envelope),envelope.publicKey,envelope.payload.message,Buffer.from(envelope.payload.nonce,"base64"),!policy.freeze,parsed.data.policyId,req.userId]);
+      if(!updated.rowCount){await client.query("ROLLBACK");return fail(res,404,"Policy was not found.");}
+    }else{
+      const count=await client.query<{count:string}>("SELECT count(*)::text AS count FROM policies WHERE user_id=$1",[req.userId]);
+      if(Number(count.rows[0]?.count??0)>=3){await client.query("ROLLBACK");return fail(res,409,"You can keep up to three policies. Delete one before adding another.");}
+      await client.query("INSERT INTO policies(user_id,body,signature,signer_public_key,signed_message,signed_nonce,active) VALUES($1,$2,$3,$4,$5,$6,$7)",[req.userId,JSON.stringify(policy),JSON.stringify(envelope),envelope.publicKey,envelope.payload.message,Buffer.from(envelope.payload.nonce,"base64"),!policy.freeze]);
+    }
+    await client.query("UPDATE users SET agent_enabled=false,agent_mode='off',auto_enabled=false,updated_at=now() WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM policies WHERE user_id=$1 AND active=true)",[req.userId]);
     await client.query("COMMIT");
     res.json({saved:true,policy});
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}

@@ -40,11 +40,27 @@ export function migrate(): Promise<void> {
       nonce TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL
     );
     CREATE TABLE IF NOT EXISTS policies (
-      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       body JSONB NOT NULL, signature JSONB NOT NULL, signer_public_key TEXT NOT NULL,
       signed_message TEXT NOT NULL, signed_nonce BYTEA NOT NULL,
       active BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    ALTER TABLE policies ADD COLUMN IF NOT EXISTS id BIGSERIAL;
+    DO $$
+    DECLARE primary_key_columns TEXT[];
+    BEGIN
+      SELECT array_agg(attribute.attname::TEXT ORDER BY key_column.ordinality)
+      INTO primary_key_columns
+      FROM pg_constraint constraint_row
+      CROSS JOIN LATERAL unnest(constraint_row.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+      JOIN pg_attribute attribute ON attribute.attrelid=constraint_row.conrelid AND attribute.attnum=key_column.attnum
+      WHERE constraint_row.conrelid='policies'::regclass AND constraint_row.contype='p';
+      IF primary_key_columns IS DISTINCT FROM ARRAY['id']::TEXT[] THEN
+        ALTER TABLE policies DROP CONSTRAINT IF EXISTS policies_pkey;
+        ALTER TABLE policies ADD CONSTRAINT policies_pkey PRIMARY KEY(id);
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS policies_user_created_idx ON policies(user_id,created_at DESC,id DESC);
     CREATE TABLE IF NOT EXISTS quote_cache (
       cache_key TEXT PRIMARY KEY, quote JSONB NOT NULL, cached_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
