@@ -22,7 +22,7 @@ import { runScheduledWorker } from "./scheduledWorker.js";
 import { checkRheaRouteRegistration, getRheaFrozenTokenSet, getRheaMarkets, getRheaSwapQuote } from "./rheaMarkets.js";
 import { getNearStablePools } from "./investmentPools.js";
 import { createThesis, ThesisRateLimitError } from "./thesis.js";
-import { getFlywheelOverview, FlywheelOverviewError } from "./flywheel.js";
+import { getFlywheelOverview, getStoredNetworkOverview, FlywheelOverviewError } from "./flywheel.js";
 import { createTelegramBot, telegramCommands } from "./telegramBot.js";
 
 declare global { namespace Express { interface Request { telegramId?: number; userId?: number } } }
@@ -140,7 +140,7 @@ app.get("/api/market/sentiment",asyncRoute(async(_req,res)=>{
 }));
 app.get("/api/network/overview",asyncRoute(async(_req,res)=>{
   try{
-    const data=await getNetworkOverview();
+    const data=await getStoredNetworkOverview()??await getNetworkOverview();
     res.setHeader("Cache-Control","public, max-age=300");
     res.json(data);
   }catch(error){

@@ -171,6 +171,7 @@ export const flywheelOverviewSchema=z.object({
     txCount24h:z.number().int().nonnegative(),
     successRate24h:z.number().min(0).max(1).finite(),
   }),
+  networkOverview:networkOverviewSchema.optional(),
   pocketNear:z.object({
     volumeUsd24h:z.number().nonnegative().finite(),
     successfulTxCount24h:z.number().int().nonnegative(),

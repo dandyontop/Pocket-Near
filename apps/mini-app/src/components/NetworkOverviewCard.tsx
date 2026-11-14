@@ -31,6 +31,7 @@ export function NetworkOverviewCard(){
         <div><span>Success rate</span><strong>{(overview.successRate24h*100).toFixed(1)}%</strong></div>
       </div>
       <p className="network-overview-window">{new Date(overview.windowStart).toLocaleString()} – {new Date(overview.windowEnd).toLocaleString()}</p>
+      <p className="network-overview-window">{Date.now()-Date.parse(overview.updatedAt)>60*60*1000?"Last successful refresh":"Snapshot updated"}: {new Date(overview.updatedAt).toLocaleString()}</p>
       <div className="network-overview-pairs">
         <strong>Top pairs by volume</strong>
         {overview.topPairs24h.length?overview.topPairs24h.slice(0,5).map(pair=><div className="network-overview-pair" key={pair.pair}><span title={pair.pair}>{pair.label??pair.pair}</span><b>{usd(pair.volumeUsd)}</b></div>):<span className="network-overview-message">No pair activity in this window.</span>}

@@ -27,6 +27,7 @@ jobs:
             exit 1
           fi
           curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-delay 5 --retry-all-errors \
+            --retry 3 --retry-delay 5 \
+            --write-out '\nHTTP status: %{http_code}\n' \
             -H "Authorization: Bearer $WORKER_SECRET" \
             "$APP_URL/api/worker/tick"

@@ -1,4 +1,4 @@
-import { flywheelOverviewSchema, type FlywheelOverview } from "@pocket-near/shared";
+import { flywheelOverviewSchema, networkOverviewSchema, type FlywheelOverview, type NetworkOverview } from "@pocket-near/shared";
 import { pool } from "./db.js";
 import { aggregateExplorerWindow, getExplorerWindow, parseExplorerUsd, transactionTimestamp, type ExplorerTransaction } from "./networkOverview.js";
 import { getSupportedToken } from "./quotes.js";
@@ -175,6 +175,7 @@ async function buildSnapshot():Promise<FlywheelOverview>{
       txCount24h:overview.txCount24h,
       successRate24h:overview.successRate24h,
     },
+    networkOverview:overview,
     pocketNear:{
       volumeUsd24h:routedVolumeUsd24h,
       successfulTxCount24h,
@@ -288,4 +289,10 @@ export async function getFlywheelOverview():Promise<FlywheelOverview>{
     defiLlamaPeers:await getDefiLlamaPeers(),
     peersMethodology:PEERS_METHOD,
   });
+}
+
+export async function getStoredNetworkOverview():Promise<NetworkOverview|undefined>{
+  const result=await pool.query<{aggregate:unknown}>("SELECT aggregate FROM flywheel_hourly_snapshots ORDER BY snapshot_hour DESC LIMIT 1");
+  if(!result.rowCount)return undefined;
+  return flywheelOverviewSchema.parse(result.rows[0]!.aggregate).networkOverview;
 }
