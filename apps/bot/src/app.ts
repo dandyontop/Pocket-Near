@@ -648,6 +648,30 @@ app.get("/api/portfolio",requireSession,asyncRoute(async (req,res) => {
   catch{res.json({accountId:account.rows[0].account_id,balances:[],failures:["NEAR account balance could not be loaded from the RPC."]});}
 }));
 
+app.get("/api/near/transactions/:hash/status",requireSession,asyncRoute(async(req,res)=>{
+  const hash=z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,64}$/).safeParse(req.params.hash);
+  if(!hash.success)return fail(res,400,"The NEAR transaction hash is invalid.");
+  const user=await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);
+  const accountId=user.rows[0]?.account_id;
+  if(!accountId)return fail(res,409,"Connect the NEAR account that approved this transaction to check its status.");
+  try{
+    const result=await nearProvider.viewTransactionStatus({txHash:hash.data,accountId,waitUntil:"FINAL"}) as {
+      status?:Record<string,unknown>;
+      transaction_outcome?:{outcome?:{status?:Record<string,unknown>}};
+      receipts_outcome?:Array<{outcome?:{status?:Record<string,unknown>}}>;
+    };
+    const statuses=[result.status,result.transaction_outcome?.outcome?.status,...(result.receipts_outcome??[]).map(receipt=>receipt.outcome?.status)].filter((status):status is Record<string,unknown>=>Boolean(status));
+    const failed=statuses.some(status=>"Failure" in status);
+    const complete=statuses.some(status=>"SuccessValue" in status||"SuccessReceiptId" in status);
+    res.setHeader("Cache-Control","no-store");
+    res.json({state:failed?"failure":complete?"success":"pending",transactionHash:hash.data});
+  }catch(error){
+    const message=error instanceof Error?error.message:"NEAR RPC status lookup failed.";
+    if(/does not exist|unknown transaction|not found/i.test(message))return res.json({state:"pending",transactionHash:hash.data});
+    throw error;
+  }
+}));
+
 app.get("/api/asset-balance",requireSession,asyncRoute(async(req,res)=>{
   const assetId=z.string().min(1).max(160).safeParse(req.query.assetId);
   if(!assetId.success)return fail(res,400,"Choose a valid asset before checking its balance.");

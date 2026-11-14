@@ -38,7 +38,9 @@ const nearTransactionHash=(value:unknown):string|undefined=>{
   if(!value||typeof value!=="object")return undefined;
   const root=value as Record<string,unknown>;
   const transaction=root.transaction&&typeof root.transaction==="object"?root.transaction as Record<string,unknown>:{};
-  const hash=transaction.hash??root.transactionHash??root.transaction_hash;
+  const outcome=root.transaction_outcome&&typeof root.transaction_outcome==="object"?root.transaction_outcome as Record<string,unknown>:{};
+  const camelOutcome=root.transactionOutcome&&typeof root.transactionOutcome==="object"?root.transactionOutcome as Record<string,unknown>:{};
+  const hash=transaction.hash??root.transactionHash??root.transaction_hash??root.hash??outcome.id??camelOutcome.id;
   return typeof hash==="string"&&hash?hash:undefined;
 };
 
@@ -122,7 +124,7 @@ export default function App(){
   const [rheaRiskAcknowledged,setRheaRiskAcknowledged]=useState(false);
   const [now,setNow]=useState(()=>Date.now());
   const [watchLoading,setWatchLoading]=useState(false);
-  const [executionStatus,setExecutionStatus]=useState<{kind:"submitted"|"error";message:string;txHash?:string}|null>(null);
+  const [executionStatus,setExecutionStatus]=useState<{kind:"submitted"|"error";message:string;txHash?:string;state?:"pending"|"success"|"failure"}|null>(null);
   const activePolicyCount=policies.filter(saved=>saved.active).length;
   const editorPolicy=policies.find(saved=>saved.id===editingPolicyId)?.body??policy;
   const from=useMemo(()=>assets.find(a=>a.assetId===fromId),[assets,fromId]);
@@ -193,6 +195,27 @@ export default function App(){
 
   useEffect(()=>{if(!notice)return;const id=window.setTimeout(()=>setNotice(""),4500);return()=>window.clearTimeout(id);},[notice]);
   useEffect(()=>{if(!quote)return;const timer=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(timer);},[quote?.expiresAt]);
+  useEffect(()=>{
+    if(executionStatus?.kind!=="submitted"||!executionStatus.txHash||executionStatus.state==="success"||executionStatus.state==="failure")return;
+    let active=true;
+    let inFlight=false;
+    const check=async()=>{
+      if(inFlight)return;
+      inFlight=true;
+      try{
+        const result=await api.nearTransactionStatus(executionStatus.txHash!);
+        if(!active)return;
+        if(result.state==="success")setExecutionStatus(current=>current&&current.txHash===result.transactionHash?{...current,state:"success",message:"Rhea swap confirmed on NEAR."}:current);
+        else if(result.state==="failure")setExecutionStatus(current=>current&&current.txHash===result.transactionHash?{...current,state:"failure",message:"The NEAR transaction failed during execution. Check the transaction details and balances before retrying."}:current);
+        else setExecutionStatus(current=>current&&current.txHash===result.transactionHash?{...current,state:"pending",message:"Transaction submitted. Waiting for final NEAR confirmation; Pocket Near is checking automatically."}:current);
+      }catch{
+        if(active)setExecutionStatus(current=>current&&current.txHash===executionStatus.txHash?{...current,state:"pending",message:"Transaction submitted. NEAR status is temporarily unavailable; Pocket Near will retry automatically."}:current);
+      }finally{inFlight=false;}
+    };
+    void check();
+    const timer=window.setInterval(()=>void check(),5_000);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[executionStatus?.kind,executionStatus?.txHash,executionStatus?.state]);
   const fetchQuote=useCallback(async(userInitiated=true):Promise<QuoteView|null>=>{
     if(!account||!from||!to){setError("Connect a wallet and select both assets before requesting a quote.");return null;}
     setError("");
@@ -210,12 +233,14 @@ export default function App(){
       if(!target||!refund)throw new Error("Enter the destination and refund addresses for the selected chains before requesting a quote.");
       const baseAmount=toBase(amount,from.decimals);
       if(BigInt(baseAmount)<=0n)throw new Error("Enter an amount greater than zero.");
-      if(isNear(from)){
+      {
         const funds=await api.assetBalance(from.assetId,from.symbol,from.decimals);
         setBalanceCheck(funds);
-        const reserve=BigInt(funds.nativeReserve);
-        if(funds.supported&&funds.amount!==null&&(BigInt(funds.amount)<BigInt(baseAmount)||(from.assetId==="near:native"&&BigInt(funds.amount)<BigInt(baseAmount)+reserve)))throw new Error(`Insufficient ${funds.symbol} balance for this swap and transaction fees. Add funds or reduce the amount, then try again.`);
-        if(funds.nativeBalance!==null&&BigInt(funds.nativeBalance)<reserve)throw new Error("Not enough NEAR for transaction fees. Keep at least 0.02 NEAR available, then try again.");
+        if(isNear(from)){
+          const reserve=BigInt(funds.nativeReserve);
+          if(funds.supported&&funds.amount!==null&&(BigInt(funds.amount)<BigInt(baseAmount)||(from.assetId==="near:native"&&BigInt(funds.amount)<BigInt(baseAmount)+reserve)))throw new Error(`Insufficient ${funds.symbol} balance for this swap and transaction fees. Add funds or reduce the amount, then try again.`);
+          if(funds.nativeBalance!==null&&BigInt(funds.nativeBalance)<reserve)throw new Error("Not enough NEAR for transaction fees. Keep at least 0.02 NEAR available, then try again.");
+        }
       }
       const slippage=Number(maxSlippage);
       if(!Number.isInteger(slippage)||slippage<1||slippage>500)throw new Error("Slippage tolerance must be between 1 and 500 basis points.");
@@ -226,7 +251,7 @@ export default function App(){
         else setDecision({allowed:true});
       }
       return data.quote;
-    }catch(e){const message=e instanceof Error?e.message:"Could not load a live quote.";const lower=message.toLowerCase();setError(lower.includes("minimum")||lower.includes("too small")||lower.includes("no route")?`${message} Try a larger amount or choose another asset pair.`:message);return null;}finally{setBusy(false);}
+    }catch(e){const message=e instanceof Error?e.message:"Could not load a live quote.";const lower=message.toLowerCase();setError(lower.includes("minimum")||lower.includes("too small")||lower.includes("no route")?`Amount below minimum${message.match(/\d+(?:\.\d+)?\s*[A-Z]{2,12}/)?.[0]?`: ${message.match(/\d+(?:\.\d+)?\s*[A-Z]{2,12}/)?.[0]}`:""}. ${message} Reduce or increase the amount to meet the provider minimum, then refresh the quote.`:lower.includes("expired")?`${message} Return to Swap and refresh the quote before depositing.`:lower.includes("insufficient")||lower.includes("balance")?`${message} Add funds or reduce the amount, then refresh the quote.`:`${message} Refresh the quote and try again; if it persists, check the provider status before sending funds.`);return null;}finally{setBusy(false);}
   },[account,from,to,amount,maxSlippage,policy,policies,recipient,refundTo]);
 
   const connect=async()=>{setBusy(true);setError("");try{const a=await connectWallet();const challenge=await api.walletChallenge(a.accountId);const signed=await signPolicy(challenge.message,challenge.recipient,challenge.nonce);await api.walletVerify({...signed,payload:{message:challenge.message,recipient:challenge.recipient,nonce:challenge.nonce}});try{window.localStorage.removeItem(disconnectedWalletKey);}catch{}setAccount(a);setProfileAccountId(a.accountId);await loadDashboard();setWalletSignInRequired(false);setNotice(`Connected ${a.accountId}`);}catch(e){setError(e instanceof Error?e.message:"Wallet connection failed.");}finally{setBusy(false);}};
@@ -350,11 +375,10 @@ export default function App(){
     try{
       const result=await executeRheaSwap({accountId:account.accountId,tokenIn,amount:amountIn,msg:String(raw.msg??""),signature:String(raw.signature??"")});
       const value=result&&typeof result==="object"?result as Record<string,unknown>:{};
-      const tx=value.transaction&&typeof value.transaction==="object"?value.transaction as Record<string,unknown>:{};
-      const hash=String(value.transactionHash??value.transaction_hash??value.hash??tx.hash??"")||undefined;
+      const hash=nearTransactionHash(result);
       const status=value.status&&typeof value.status==="object"?value.status as Record<string,unknown>:{};
       if("Failure" in status)throw new Error("The NEAR transaction was included but failed. Check the transaction details in your wallet before trying again.");
-      setExecutionStatus({kind:"submitted",message:hash?"Rhea swap transaction was submitted by your wallet. Waiting for chain confirmation is handled by the wallet explorer link.":"Your wallet returned from the signing request. Verify transaction status in your wallet before treating the swap as complete.",...(hash?{txHash:hash}:{})});
+      setExecutionStatus({kind:"submitted",message:hash?"Transaction submitted. Pocket Near is checking NEAR for final confirmation.":"Your wallet returned without a transaction hash. Check the wallet transaction history; automatic status checks need the hash.",...(hash?{txHash:hash,state:"pending" as const}:{})});
       if(hash)setNotice(`Swap submitted · ${hash.slice(0,12)}…`);
       await refreshPositions();
     }catch(e){const message=e instanceof Error?e.message:"Wallet did not submit the swap.";setExecutionStatus({kind:"error",message});setError(message);}finally{setBusy(false);}
@@ -397,7 +421,7 @@ export default function App(){
       const preview=BigInt(quote.amountOut),live=BigInt(result.swap.quote.amountOut);
       const changeBps=preview===0n?0n:(preview>live?preview-live:live-preview)*10_000n/preview;
       setRepricing(changeBps>50n?{swapId:result.swap.id,previewOutput:quote.amountOut}:null);setRepriceAccepted(changeBps<=50n);
-      setNotice(result.reused?"Opened your existing deposit instructions.":"Live deposit quote prepared. Review the amount and address before funding it.");
+      setNotice(result.reused?"Opened your existing deposit instructions.":"Live executable quote prepared. Review the updated output, minimum output, and deposit address before funding it.");
       setTab("Activity");
     }catch(e){setError(e instanceof Error?e.message:"Could not prepare an executable Intents quote.");}
     finally{setBusy(false);}
@@ -419,7 +443,7 @@ export default function App(){
       }
       const hash=nearTransactionHash(result);
       if(!hash){
-        setExecutionStatus({kind:"submitted",message:"The wallet returned without a transaction hash. Pocket Near will check the deposit address automatically."});
+        setExecutionStatus({kind:"submitted",message:"Waiting for wallet confirmation. The wallet returned no transaction hash; Pocket Near is checking 1-Click status and will continue retrying while this swap is pending."});
         return;
       }
       setExecutionStatus({kind:"submitted",message:"Your wallet submitted the NEAR deposit. Sending its hash to 1-Click for verification.",txHash:hash});
@@ -474,7 +498,7 @@ export default function App(){
       {error&&<div className="alert error"><ShieldAlert size={17}/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss"><X size={15}/></button></div>}
       {notice&&<div className="alert success"><Check size={17}/><span>{notice}</span><button onClick={()=>setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
       {tab==="Home"&&<><Suspense fallback={<div className="empty-activity">Loading Home…</div>}><HomeScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} balanceError={portfolioError} busy={busy} agentOn={agentOn} onConnect={()=>void connect()} onDisconnect={()=>void disconnect()} onSwap={()=>setTab("Swap")}/></Suspense><details className="home-more-network" onToggle={event=>setNetworkDetailsOpen(event.currentTarget.open)}><summary>More network analytics and scenarios</summary>{networkDetailsOpen&&<Suspense fallback={<div className="empty-activity">Loading network details…</div>}><FlywheelScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} busy={busy} onConnect={()=>void connect()} onStake={amount=>void submitRNearStake(amount)} showStaking={false}/></Suspense>}</details></>}
-      {tab==="Activity"&&<Suspense fallback={<div className="empty-activity">Loading Activity…</div>}><ActivityScreen swaps={intentSwaps} selected={activeIntentSwap??intentSwaps[0]??null} assets={assets} previewOutput={repricing?.swapId===(activeIntentSwap??intentSwaps[0])?.id?repricing?.previewOutput??null:null} repriceAccepted={repriceAccepted} statusError={swapStatusError} busy={busy} statusBusyId={swapStatusBusyId} onSelect={selectIntentSwap} onRefreshAll={()=>void refreshIntentSwaps()} onRefresh={id=>void refreshIntentSwap(id)} onSendNear={()=>void sendNearIntentDeposit()} onAcceptReprice={()=>setRepriceAccepted(value=>!value)}/></Suspense>}
+      {tab==="Activity"&&<Suspense fallback={<div className="empty-activity">Loading Activity…</div>}><ActivityScreen swaps={intentSwaps} selected={activeIntentSwap??intentSwaps[0]??null} assets={assets} previewOutput={repricing?.swapId===(activeIntentSwap??intentSwaps[0])?.id?repricing?.previewOutput??null:null} repriceAccepted={repriceAccepted} statusError={swapStatusError} busy={busy} statusBusyId={swapStatusBusyId} onSelect={selectIntentSwap} onRefreshAll={()=>void refreshIntentSwaps()} onRefresh={id=>void refreshIntentSwap(id)} onSendNear={()=>void sendNearIntentDeposit()} onAcceptReprice={()=>setRepriceAccepted(value=>!value)} onGoToSwap={()=>{setTab("Swap");setSwapStep("edit");clearActiveQuote();}}/></Suspense>}
       {tab==="Explore"&&<>
         <section className="page-title"><p className="eyebrow">DISCOVER NEAR</p><h1>Explore</h1><p>Find markets, earn opportunities, apps, games and agents.</p></section>
         <div className="discover-segments explore-categories" role="tablist" aria-label="Explore categories">
@@ -524,8 +548,7 @@ export default function App(){
                 <div><span>Destination address</span><b>{recipient||(to?.blockchain.toLowerCase()==="near"?account?.accountId:"Not provided")}</b></div>
                 <div><span>Refund address</span><b>{refundTo||(from?.blockchain.toLowerCase()==="near"?account?.accountId:"Not provided")}</b></div>
               </div>
-              {from?.blockchain.toLowerCase()==="near"&&balanceCheck&&<p className="meme-disclaimer">{balanceCheck.supported?`Balance checked: ${fmtExact(balanceCheck.amount??"0",balanceCheck.decimals)} ${balanceCheck.symbol}. ${balanceCheck.nativeBalance!==null?`Fee reserve: ${fmtExact(balanceCheck.nativeBalance,24)} NEAR available.`:""}`:`Balance could not be checked for ${from.symbol}. Verify it in the source wallet before depositing.`}</p>}
-              {from&&from.blockchain.toLowerCase()!=="near"&&<p className="meme-disclaimer">Pocket Near cannot read this external-chain balance. Check your source wallet before depositing.</p>}
+              {balanceCheck&&<p className="meme-disclaimer">{balanceCheck.supported?`Balance checked: ${fmtExact(balanceCheck.amount??"0",balanceCheck.decimals)} ${balanceCheck.symbol}. Required NEAR gas reserve: ${fmtExact(balanceCheck.nativeReserve,24)} NEAR${balanceCheck.nativeBalance!==null?` (${fmtExact(balanceCheck.nativeBalance,24)} available)`:""}.`:`Pocket Near cannot read ${from?.blockchain??"this"} wallet balances through the connected NEAR wallet. Verify ${from?.symbol??"the token"} funds and required network gas in your source wallet before continuing.`}</p>}
               {quote.slippageBps>100&&<p className="flywheel-note">High slippage tolerance: {(quote.slippageBps/100).toFixed(2)}%. The provider may return less than the estimate, down to the minimum output shown above.</p>}
               {quote.provider==="rhea"?<>
                 <p className="meme-disclaimer">Next action: your wallet will show the Rhea pool swap call and exact NEAR transaction details before you approve it.</p>
@@ -535,14 +558,14 @@ export default function App(){
               </>:<>
                 <div className={`policy-status ${decision?.allowed?"ok":"blocked"}`}><Shield size={15}/><span>{decision?.allowed?(policies.some(saved=>saved.active)?"Policy check passed · wallet confirmation is still required":"No active policy · wallet confirmation is still required"):decision?.reason??(policies.some(saved=>saved.active)?"Policy check required":"No active policy · wallet confirmation is still required")}</span></div>
                 {policy&&<button className="secondary-button" onClick={()=>void runAgent()} disabled={busy}>{busy?<span className="loader small"/>:null}{decision?.allowed?"Recheck policy":"Check policy"}</button>}
-                <p className="meme-disclaimer">If you continue, the deposit instructions will appear in Activity. Your wallet must sign and submit the transfer; the quote itself does not move funds.</p>
+                <p className="meme-disclaimer">Output is an estimate, not a guarantee. The provider can execute at a lower amount, down to the minimum output shown. If you continue, deposit instructions will appear in Activity; you must send from the appropriate connected source wallet. Pocket Near cannot detect a transaction that is never sent to the saved 1-Click deposit address.</p>
                 {decision?.allowed&&<button className="primary-button" onClick={()=>void startIntentSwap()} disabled={busy||quote.stale||quoteExpired}>{busy?<span className="loader small"/>:"Continue to Activity"}</button>}
               </>}
                 {(quote.stale||quoteExpired)&&<button className="primary-button" onClick={()=>void fetchQuote()} disabled={busy}>{busy?<span className="loader small"/>:"Refresh quote"}</button>}
                 <button className="secondary-button" onClick={()=>{clearActiveQuote();setError("");}}>Edit swap</button>
               <button className="secondary-button share-preview" onClick={sharePreview}><ArrowUpRight size={14}/>Share quote preview</button>
             </div>}
-            {executionStatus&&<div className={`execution-status ${executionStatus.kind}`} role="status"><strong>{executionStatus.kind==="submitted"?"Wallet transaction submitted":"Transaction error"}</strong><span>{executionStatus.message}</span>{executionStatus.txHash&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(executionStatus.txHash)}`} target="_blank" rel="noreferrer">View transaction on NearBlocks <ExternalLink size={13}/></a>}</div>}
+            {executionStatus&&<div className={`execution-status ${executionStatus.kind}`} role="status"><strong>{executionStatus.state==="success"?"Swap confirmed":executionStatus.state==="failure"?"Swap failed":executionStatus.kind==="submitted"?"Wallet transaction submitted":"Transaction error"}</strong><span>{executionStatus.message}</span>{executionStatus.txHash&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(executionStatus.txHash)}`} target="_blank" rel="noreferrer">View transaction on NearBlocks <ExternalLink size={13}/></a>}</div>}
             {swapStep==="edit"&&account&&!quote&&<div className="quote-empty"><Activity size={18}/><span>Select assets and amount, then request a live quote.</span></div>}
           </section>
         </>}
