@@ -22,11 +22,13 @@ See [THESIS.md](./THESIS.md) for the product thesis, evidence on both sides, ver
 
 ### Judge walkthrough
 
-1. Follow [Local setup](#local-setup), then run `npm run dev`. A local browser session is available in development; a Telegram bot token is needed only to use the Telegram bot itself.
-2. Open the Mini App, connect a NEAR wallet, and sign the one-time login challenge. In **Swap**, available supported NEAR tokens appear first with their balances. Choose a pair and amount, request a quote, and review the expected output, minimum output, slippage, fees, balance, and gas reserve.
-3. Review the policy result and request an executable quote. Approve a Rhea swap or NEAR deposit in the wallet. Rhea transaction status is checked from the wallet-returned transaction hash; Intents status is polled from the saved 1-Click deposit instructions. The app reports provider/chain status and does not treat a quote as a completed swap.
-4. In **Explore → Earn**, review the RNEAR staking card, approve a small stake in the wallet, and refresh positions to see the on-chain result. Pool opportunity indexing may be unavailable independently of RNEAR contract balances.
-5. In **Explore → Markets**, inspect the NEAR thesis and market metrics. The thesis identifies its source data and labels its rules-based fallback if NEAR AI Cloud is unavailable.
+1. **Start the app.** Follow [Local setup](#local-setup) and run `npm run dev`. Open the local browser session. **See:** the Mini App loads without a Telegram bot token; a bot token is needed only to test Telegram bot commands or launch flow.
+2. **Connect a wallet.** Connect a NEAR wallet and sign the one-time login challenge, then open **Swap**. **See:** supported NEAR tokens with available balances appear first, and the connected account is shown. Without a wallet, continue with the public Explore pages; personal balances and swap actions require wallet sign-in.
+3. **Review a swap quote.** Choose a supported NEAR pair, enter an amount, and request a quote. **See:** the quote review shows expected and minimum output, slippage, fees and expiry when provided, alongside the selected-token balance and separate NEAR gas reserve. To test the executable Intents flow, configure `ONE_CLICK_JWT`, pass the signed policy check, and continue to Activity. The app fetches a fresh executable quote for confirmation; a wallet approval is required to send a deposit. After approval, Rhea status is checked from the wallet-returned transaction hash, while Intents status is polled from saved deposit instructions. Never treat the quote itself as a completed swap.
+4. **Inspect staking.** Open **Explore → Earn** and review the RNEAR staking card and positions. **See:** the current wallet's on-chain RNEAR position when available. Staking is optional and requires a wallet-approved transaction; pool discovery may be unavailable separately from the direct RNEAR position.
+5. **Inspect research and sentiment.** Open **Explore → Markets**, review the NEAR thesis and market metrics, then refresh the sentiment card. **See:** cited source data, a labeled rules-based fallback if NEAR AI Cloud is unavailable, and an updated check timestamp for the sentiment reading.
+
+**Mainnet verification evidence:** The demo video shows the wallet-approved staking and swap flows working on NEAR mainnet. One successful mainnet transaction is available for inspection on [NEAR Blocks](https://nearblocks.io/txns/BrnSTmFJ6AMq7a5CiF1YFo9eQcFsxWgRrWrWzaZvd38N) (transaction hash: `BrnSTmFJ6AMq7a5CiF1YFo9eQcFsxWgRrWrWzaZvd38N`).
 
 ## Security boundary
 
