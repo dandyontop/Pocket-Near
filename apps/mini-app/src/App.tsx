@@ -85,7 +85,7 @@ export default function App(){
   const [policyPairs,setPolicyPairs]=useState<AgentPolicy["allowedPairs"]>([]);
   const [autoRunning,setAutoRunning]=useState(false);
   const [unlockReason,setUnlockReason]=useState("");
-  const [unlockAction,setUnlockAction]=useState<((password:string)=>Promise<void>)|null>(null);
+  const [unlockAction,setUnlockAction]=useState<((password:string,onWallet:()=>void)=>Promise<void>)|null>(null);
   const [prices,setPrices]=useState<PriceRow[]>([]);
   const [priceSource,setPriceSource]=useState("");
   const [watchlist,setWatchlist]=useState<string[]>([]);
@@ -230,12 +230,11 @@ export default function App(){
   };
 
   const savePassword=async(value:string)=>{await api.savePassword(value);setPasswordSet(true);setNotice("Unlock password saved.");try{const me=await api.me();setPasswordSet(me.passwordSet);}catch{/* Password was saved successfully; the next dashboard refresh rechecks auth state. */}};
-  const requestUnlock=(reason:string,action:(password:string)=>Promise<void>)=>{setUnlockReason(reason);setUnlockAction(()=>action);};
+  const requestUnlock=(reason:string,action:(password:string,onWallet:()=>void)=>Promise<void>)=>{setUnlockReason(reason);setUnlockAction(()=>action);};
 
-  const savePolicy=async(unlockPassword:string)=>{
+  const buildPolicy=():AgentPolicy=>{
     if(!account||!policyPairs.length)throw new Error("Connect a wallet and add at least one policy pair first.");
     if(!passwordSet)throw new Error("Create an unlock password before signing a policy.");
-    await api.verifyUnlock(unlockPassword);
     if(policyPairs.length>30)throw new Error("A policy can include at most 30 pairs.");
     const pairKeys=new Set<string>();
     for(const pair of policyPairs){
@@ -255,27 +254,45 @@ export default function App(){
     if(allowedPairs.some(pair=>pair.from.startsWith("near:")!==pair.to.startsWith("near:")))throw new Error("Rhea-only NEAR pool assets can only be paired with another Rhea pool asset in a signed policy.");
     const savedWindows=policy?.timeWindows??[DEFAULT_WINDOW];
     const next:AgentPolicy={version:1,accountId:account.accountId,allowedPairs,maxTradeAmount:toBase(maxTrade,limitAsset.decimals),dailyLimit:toBase(daily,limitAsset.decimals),weeklyLimit:toBase(weekly,limitAsset.decimals),allowedDestinations,timeWindows:[{...savedWindows[0]!,start:windowStart,end:windowEnd},...savedWindows.slice(1)],maxSlippageBps:slippageBps,freeze:false,updatedAt:new Date().toISOString()};
-    const challenge=await api.challenge(account.accountId);
-    const message=`Pocket Near policy authorization\nAccount: ${account.accountId}\nNonce: ${challenge.nonce}\nPolicy: ${canonicalPolicy(next)}`;
+    return next;
+  };
+  const savePolicy=async(unlockPassword:string,next:AgentPolicy,challenge:Awaited<ReturnType<typeof api.challenge>>,onWallet:()=>void)=>{
+    await api.verifyUnlock(unlockPassword);
+    onWallet();
+    const message=`Pocket Near policy authorization\nAccount: ${next.accountId}\nNonce: ${challenge.nonce}\nPolicy: ${canonicalPolicy(next)}`;
     const signed=await signPolicy(message,challenge.recipient,challenge.nonce);
     await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword);
     setPolicy(next);clearActiveQuote();setNotice("Policy saved and signed by your wallet. Request a fresh quote under the updated policy.");
     setPolicyActive(true);
   };
+  const requestPolicySave=async()=>{
+    setBusy(true);setError("");
+    try{
+      const next=buildPolicy();
+      const challenge=await api.challenge(next.accountId);
+      requestUnlock("Unlock to authorize this policy change",(password,onWallet)=>savePolicy(password,next,challenge,onWallet));
+    }catch(e){setError(e instanceof Error?e.message:"Policy details are invalid.");}
+    finally{setBusy(false);}
+  };
 
-  const toggleFreeze=async(unlockPassword:string)=>{
+  const toggleFreeze=async(unlockPassword:string,next:AgentPolicy,challenge:Awaited<ReturnType<typeof api.challenge>>,onWallet:()=>void)=>{
+    await api.verifyUnlock(unlockPassword);
+    onWallet();
+    const message=`Pocket Near policy authorization\nAccount: ${next.accountId}\nNonce: ${challenge.nonce}\nPolicy: ${canonicalPolicy(next)}`;
+    const signed=await signPolicy(message,challenge.recipient,challenge.nonce);
+    await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword);
+    setPolicy(next);clearActiveQuote();setAgentOn(!next.freeze);setNotice(next.freeze?"Emergency freeze is active.":"Policy updated; request a fresh quote under the updated policy.");
+    setPolicyActive(!next.freeze);
+  };
+  const requestFreeze=async()=>{
     if(!policy)return;
     setBusy(true);setError("");
     try{
-      await api.verifyUnlock(unlockPassword);
       const next={...policy,freeze:!policy.freeze,updatedAt:new Date().toISOString()};
       const challenge=await api.challenge(policy.accountId);
-      const message=`Pocket Near policy authorization\nAccount: ${policy.accountId}\nNonce: ${challenge.nonce}\nPolicy: ${canonicalPolicy(next)}`;
-      const signed=await signPolicy(message,challenge.recipient,challenge.nonce);
-      await api.savePolicy(next,{...signed,payload:{message,recipient:challenge.recipient,nonce:challenge.nonce}},unlockPassword);
-      setPolicy(next);clearActiveQuote();setAgentOn(!next.freeze);setNotice(next.freeze?"Emergency freeze is active.":"Policy updated; request a fresh quote under the updated policy.");
-      setPolicyActive(!next.freeze);
-    }catch(e){setError(e instanceof Error?e.message:"Policy update failed.");}finally{setBusy(false);}
+      requestUnlock(policy.freeze?"Unlock to resume the agent":"Unlock to update the signed policy and activate emergency freeze",(password,onWallet)=>toggleFreeze(password,next,challenge,onWallet));
+    }catch(e){setError(e instanceof Error?e.message:"Could not prepare the policy signature.");}
+    finally{setBusy(false);}
   };
 
   const runAgent=async()=>{if(!quote)return;setError("");setBusy(true);try{const result=await api.evaluate(quote.id,true);setDecision(result.decision);if(result.decision.allowed)setNotice("Policy check passed. Review the deposit details before continuing.");}catch(e){setError(e instanceof Error?e.message:"Could not evaluate this request.");}finally{setBusy(false);}};
@@ -488,7 +505,7 @@ export default function App(){
         <section className="page-title"><p className="eyebrow">YOUR ACCOUNT</p><h1>Profile</h1><p>Your wallet, signed policy and safety controls.</p></section>
         <section className="profile-card"><p className="eyebrow">WALLET</p><h2>{account?"Connected wallet":"No wallet connected"}</h2><strong>{profileAccountId??"Connect a NEAR wallet to sign in"}</strong><span>{account?<>Unlocked native balance: {nativeBalance!==null?`${nativeBalance} NEAR`:portfolioError||"Loading balance…"}. Your NEAR account ID is your Pocket Near identity.</>:"Connect your wallet to manage policies and personal settings."}</span>{account?<button className="subtle-button" disabled={busy} onClick={()=>void disconnect()}>Disconnect wallet</button>:<button className="secondary-button" disabled={busy} onClick={()=>void connect()}>Connect wallet <ArrowRight size={14}/></button>}</section>
         <div className="section-heading compact"><div><p className="eyebrow">PROFILE · SAFETY</p><h2>Safety</h2></div><ShieldAlert size={17}/></div>
-        <Suspense fallback={<div className="empty-activity">Loading safety settings…</div>}><PolicyEditor assets={assets} accountId={profileAccountId} pairs={policyPairs} onPairsChange={setPolicyPairs} defaultFrom={fromId} defaultTo={toId} maxTrade={maxTrade} setMaxTrade={setMaxTrade} daily={daily} setDaily={setDaily} weekly={weekly} setWeekly={setWeekly} maxSlippage={maxSlippage} setMaxSlippage={setMaxSlippage} destinationInput={destinationInput} setDestinationInput={setDestinationInput} windowStart={windowStart} setWindowStart={setWindowStart} windowEnd={windowEnd} setWindowEnd={setWindowEnd} activeDaysLabel={policy?.timeWindows[0]?.days.length===7?"Every day":policy?.timeWindows[0]?.days.map(day=>ASSET_DAYS[day]).join(", ")??"Every day"} additionalWindowCount={Math.max(0,(policy?.timeWindows.length??1)-1)} timezone={policy?.timeWindows[0]?.timezone??DEFAULT_WINDOW.timezone} busy={busy} passwordSet={passwordSet} canSign={Boolean(account)} hasPolicy={Boolean(policy)} frozen={Boolean(policy?.freeze)} onSign={()=>requestUnlock("Unlock to authorize this policy change",savePolicy)} onFreeze={()=>requestUnlock(policy?.freeze?"Unlock to resume the agent":"Unlock to update the signed policy and activate emergency freeze",toggleFreeze)}/></Suspense>
+        <Suspense fallback={<div className="empty-activity">Loading safety settings…</div>}><PolicyEditor assets={assets} accountId={profileAccountId} pairs={policyPairs} onPairsChange={setPolicyPairs} defaultFrom={fromId} defaultTo={toId} maxTrade={maxTrade} setMaxTrade={setMaxTrade} daily={daily} setDaily={setDaily} weekly={weekly} setWeekly={setWeekly} maxSlippage={maxSlippage} setMaxSlippage={setMaxSlippage} destinationInput={destinationInput} setDestinationInput={setDestinationInput} windowStart={windowStart} setWindowStart={setWindowStart} windowEnd={windowEnd} setWindowEnd={setWindowEnd} activeDaysLabel={policy?.timeWindows[0]?.days.length===7?"Every day":policy?.timeWindows[0]?.days.map(day=>ASSET_DAYS[day]).join(", ")??"Every day"} additionalWindowCount={Math.max(0,(policy?.timeWindows.length??1)-1)} timezone={policy?.timeWindows[0]?.timezone??DEFAULT_WINDOW.timezone} busy={busy} passwordSet={passwordSet} canSign={Boolean(account)} hasPolicy={Boolean(policy)} frozen={Boolean(policy?.freeze)} onSign={requestPolicySave} onFreeze={requestFreeze}/></Suspense>
         <section className="page-title"><h2>Agent monitoring</h2><p>Safety checks apply to policy-controlled swaps; every on-chain transaction still requires your wallet.</p></section>
         {!account&&<div className="alert info"><Wallet size={17}/>Connect your wallet before creating a signed policy.</div>}
         {!passwordSet&&<CreatePasswordCard onCreate={savePassword}/>}
@@ -512,7 +529,7 @@ export default function App(){
       </>}
     </main>
     <nav className="tabbar">{(["Home","Swap","Activity","Explore","Profile"] as const).map(name=><button key={name} className={tab===name?"selected":""} onClick={()=>setTab(name)}>{name==="Home"?<House size={18}/>:name==="Swap"?<ArrowDownUp size={18}/>:name==="Activity"?<Activity size={18}/>:name==="Explore"?<Search size={18}/>:<UserRound size={18}/>}<span>{name}</span></button>)}</nav>
-    {unlockAction&&<UnlockModal reason={unlockReason} onConfirm={async value=>{await unlockAction(value);setUnlockAction(null);}} onCancel={()=>setUnlockAction(null)}/>}
+    {unlockAction&&<UnlockModal reason={unlockReason} onConfirm={async(value,onWallet)=>{await unlockAction(value,onWallet);setUnlockAction(null);}} onCancel={()=>setUnlockAction(null)}/>}
     {selectedApp&&<div className="modal-backdrop" onClick={()=>setSelectedApp(null)}><section className="confirm-sheet" onClick={e=>e.stopPropagation()}><button className="close-modal" aria-label="Close details" onClick={()=>setSelectedApp(null)}><X size={18}/></button><p className="eyebrow">{selectedApp.category}</p><h2>{selectedApp.name}</h2><p>{selectedApp.blurb}</p>{selectedApp.tvl&&<div className="signed-note">TVL ranking: {compactUsd(selectedApp.tvl)}</div>}<button className="primary-button" onClick={()=>void openDiscover("app",selectedApp.id,selectedApp.url)}>Open app <ArrowUpRight size={14}/></button></section></div>}
   </div>;
 }
