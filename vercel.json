@@ -30,7 +30,7 @@
   ],
   "schedules": {
     "worker-tick": {
-      "schedule": "*/30 * * * *",
+      "schedule": "* * * * *",
       "path": "/api/worker/tick",
       "timezone": "UTC"
     }

@@ -11,7 +11,7 @@ import { canonicalPolicy, checkPolicy, intentSwapSchema, intentSwapStatusSchema,
 import { migrate, pool } from "./db.js";
 import { env } from "./env.js";
 import { makePasswordHash, makeSession, makeUserSession, newNonce, readSession, verifyPassword, verifyTelegramInitData } from "./security.js";
-import { readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
+import { nearProvider, readNativeNearBalance, verifyPolicySignature, type SignedPolicyEnvelope } from "./near.js";
 import { fetchLiveQuote, getExecutionStatus, getSupportedToken, QuoteProviderError, QuoteRequestError, submitDepositTx } from "./quotes.js";
 import { getCuratedApps, getCuratedGames, getEarn, getPrices } from "./dataFeeds.js";
 import { getMarketSentiment, MarketSentimentError } from "./marketSentiment.js";
@@ -258,9 +258,10 @@ async function requirePassword(req: Request, supplied?: string): Promise<boolean
 type AgentRuntime={master_lock:boolean;agent_enabled:boolean;agent_mode:string};
 type QuotePolicyEvaluation={decision?:{allowed:boolean;reason?:string};error?:{status:number;message:string}};
 async function evaluateQuoteForUser(userId:number,quote:QuoteView,runtime:AgentRuntime,recordPreview:boolean):Promise<QuotePolicyEvaluation>{
-  if(runtime.master_lock)return {error:{status:423,message:"Agent is locked."}};
   const {rows}=await pool.query<{body:unknown}>("SELECT body FROM policies WHERE user_id=$1 AND active=true ORDER BY created_at,id",[userId]);
-  if(!rows.length)return {error:{status:409,message:"No active signed policy is available."}};
+  // Policy enforcement is optional. With no active policy, normal wallet-confirmed swaps remain available.
+  if(!rows.length)return {decision:{allowed:true}};
+  if(runtime.master_lock)return {error:{status:423,message:"Agent is locked."}};
   const policies=rows.map(row=>policySchema.parse(row.body));
   const now=new Date();
   const dayKey=now.toISOString().slice(0,10);
@@ -506,7 +507,6 @@ app.post("/api/swaps/start",requireSession,asyncRoute(async(req,res)=>{
   if(!parsed.success)return fail(res,400,"Request a live quote before starting an Intents swap.");
   const runtime=(await pool.query<AgentRuntime&{account_id:string|null;master_lock:boolean}>("SELECT account_id,master_lock,agent_enabled,agent_mode FROM users WHERE id=$1",[req.userId])).rows[0];
   if(!runtime)return fail(res,401,"Wallet session expired. Connect your wallet again.");
-  if(runtime.master_lock)return fail(res,423,"Agent is locked.");
   const existing=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE user_id=$1 AND preview_quote_id=$2",[req.userId,parsed.data.quoteId]);
   if(existing.rowCount){res.setHeader("Cache-Control","no-store");return res.json({swap:presentIntentSwap(existing.rows[0]!),reused:true});}
   if(!env.ONE_CLICK_JWT)return fail(res,503,"Live Intents swaps are unavailable until the server is configured with ONE_CLICK_JWT.");
@@ -535,6 +535,17 @@ app.post("/api/swaps/start",requireSession,asyncRoute(async(req,res)=>{
   if(!originToken)return fail(res,422,"The selected origin asset is no longer available from 1-Click.");
   if(originToken.blockchain.toLowerCase()==="near"&&!originToken.contractAddress&&originToken.assetId!=="near:native")return fail(res,422,"1-Click did not provide the NEAR token contract required for a safe wallet deposit.");
   if(originToken.blockchain.toLowerCase()==="near"&&!(/^[0-9a-f]{64}$/.test(live.quote.depositAddress)||/^[a-z0-9_-]+(?:[.-][a-z0-9_-]+)*$/.test(live.quote.depositAddress)))return fail(res,502,"1-Click returned an invalid NEAR deposit address.");
+  if(originToken.blockchain.toLowerCase()==="near"){
+    const native=await readNativeNearBalance(runtime.account_id);
+    const reserve=20_000_000_000_000_000_000_000n;
+    if(BigInt(native.available)<reserve)return fail(res,409,"Not enough NEAR for transaction fees. Keep at least 0.02 NEAR available, then try again.");
+    if(originToken.contractAddress){
+      const raw=await nearProvider.callFunction({contractId:originToken.contractAddress,method:"ft_balance_of",args:{account_id:runtime.account_id}});
+      const balance=typeof raw==="string"&&/^\d+$/.test(raw)?BigInt(raw):null;
+      if(balance===null)return fail(res,503,"Could not verify the selected NEAR token balance. Refresh your balance and try again.");
+      if(balance<BigInt(live.quote.amountIn))return fail(res,409,`Insufficient ${originToken.symbol} balance. Add funds or reduce the swap amount, then request a fresh quote.`);
+    }else if(BigInt(native.available)<BigInt(live.quote.amountIn)+reserve)return fail(res,409,"Insufficient NEAR for this swap and transaction fees. Reduce the amount or add NEAR, then request a fresh quote.");
+  }
   const evaluation=await evaluateQuoteForUser(req.userId!,live.quote,runtime,true);
   if(evaluation.error)return fail(res,evaluation.error.status,evaluation.error.message);
   const decision=evaluation.decision!;
@@ -601,8 +612,10 @@ app.get("/api/swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
     const response=await getExecutionStatus(swap.deposit_address,swap.deposit_memo??undefined);
     const status=intentSwapStatusSchema.safeParse(response.status);
     if(!status.success)return fail(res,502,"1-Click returned an unsupported swap status.");
+    const originHashes=(response.swapDetails as {originChainTxHashes?:Array<{hash:string}>}|undefined)?.originChainTxHashes;
+    const detectedHash=Array.isArray(originHashes)?originHashes.find(item=>typeof item?.hash==="string")?.hash??null:null;
     const details={updatedAt:response.updatedAt,swapDetails:response.swapDetails};
-    const updated=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status=$3,status_details=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId,status.data,JSON.stringify(details)]);
+    const updated=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status=$3,deposit_tx_hash=COALESCE(deposit_tx_hash,$5),status_details=$4,updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId,status.data,JSON.stringify(details),detectedHash]);
     res.setHeader("Cache-Control","no-store");
     res.json({swap:presentIntentSwap(updated.rows[0]!)});
   }catch(error){
@@ -614,7 +627,10 @@ app.get("/api/swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
 app.post("/api/agent/evaluate",requireSession,asyncRoute(async (req,res) => {
   const body = z.object({quoteId:z.string().min(1).max(180),recordPreview:z.boolean().default(false),userInitiated:z.boolean().default(false)}).parse(req.body);
   const runtime=(await pool.query<{master_lock:boolean;agent_enabled:boolean;agent_mode:string}>("SELECT master_lock,agent_enabled,agent_mode FROM users WHERE id=$1",[req.userId])).rows[0]!;
-  if(runtime.master_lock)return fail(res,423,"Agent is locked.");
+  if(runtime.master_lock){
+    const activePolicy=await pool.query("SELECT 1 FROM policies WHERE user_id=$1 AND active=true LIMIT 1",[req.userId]);
+    if(activePolicy.rowCount)return fail(res,423,"Agent is locked.");
+  }
   if(!body.userInitiated&&(!runtime.agent_enabled||runtime.agent_mode==="off"))return fail(res,409,"Agent monitoring is off.");
   const stored=await pool.query<{quote:QuoteView}>("SELECT quote FROM live_quotes WHERE user_id=$1 AND quote_id=$2",[req.userId,body.quoteId]);
   if(!stored.rowCount)return fail(res,404,"Quote is unknown or belongs to another session. Request a new live quote.");
@@ -630,6 +646,32 @@ app.get("/api/portfolio",requireSession,asyncRoute(async (req,res) => {
   if (!account.rows[0]?.account_id) return fail(res,409,"Connect and authenticate a NEAR wallet to view your portfolio.");
   try{const balance=await readNativeNearBalance(account.rows[0].account_id);res.json({accountId:account.rows[0].account_id,balances:[{assetId:"near:native",symbol:"NEAR",amount:balance.available,decimals:24,locked:balance.locked,source:"NEAR RPC",blockHeight:balance.blockHeight}],failures:[]});}
   catch{res.json({accountId:account.rows[0].account_id,balances:[],failures:["NEAR account balance could not be loaded from the RPC."]});}
+}));
+
+app.get("/api/asset-balance",requireSession,asyncRoute(async(req,res)=>{
+  const assetId=z.string().min(1).max(160).safeParse(req.query.assetId);
+  if(!assetId.success)return fail(res,400,"Choose a valid asset before checking its balance.");
+  const user=await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);
+  if(!user.rows[0]?.account_id)return fail(res,409,"Connect your NEAR wallet to check balances.");
+  const rheaContract=assetId.data.startsWith("near:")?assetId.data.slice(5):null;
+  const token=rheaContract?undefined:await getSupportedToken(assetId.data);
+  if(!token&&!rheaContract)return fail(res,404,"Asset is no longer in the supported token list. Refresh assets and try again.");
+  const blockchain=token?.blockchain??"near";
+  const symbol=token?.symbol??String(req.query.symbol??rheaContract).slice(0,24);
+  const requestedDecimals=Number(req.query.decimals);
+  const decimals=token?.decimals??(Number.isInteger(requestedDecimals)&&requestedDecimals>=0&&requestedDecimals<=30?requestedDecimals:24);
+  if(blockchain.toLowerCase()!=="near")return res.json({supported:false,assetId:assetId.data,symbol,decimals,amount:null,nativeBalance:null,nativeReserve:"20000000000000000000000"});
+  const native=await readNativeNearBalance(user.rows[0].account_id);
+  let amount:string;
+  const contractId=token?.contractAddress??rheaContract;
+  if(contractId&&contractId!=="native"){
+    if(!/^[a-z0-9_-]+(?:[.-][a-z0-9_-]+)*$/.test(contractId))return fail(res,400,"The token contract is invalid.");
+    const raw=await nearProvider.callFunction({contractId,method:"ft_balance_of",args:{account_id:user.rows[0].account_id}});
+    if(typeof raw!=="string"||!/^\d+$/.test(raw))return fail(res,503,"The NEAR token balance could not be verified. Refresh and try again.");
+    amount=raw;
+  }else amount=native.available;
+  res.setHeader("Cache-Control","private, no-store");
+  res.json({supported:true,assetId:assetId.data,symbol,decimals,amount,nativeBalance:native.available,nativeReserve:"20000000000000000000000"});
 }));
 
 app.get("/api/events",requireSession,asyncRoute(async (req,res) => {

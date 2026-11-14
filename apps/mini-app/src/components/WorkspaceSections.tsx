@@ -10,16 +10,13 @@ type HomeScreenProps = {
   nativeBalance: string | null;
   balanceError: string;
   busy: boolean;
-  swaps: IntentSwap[];
-  assets: Asset[];
   agentOn: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
   onSwap: () => void;
-  onActivity: () => void;
 };
 
-export function HomeScreen({accountId,nativeBalance,balanceError,busy,swaps,assets,agentOn,onConnect,onDisconnect,onSwap,onActivity}:HomeScreenProps){
+export function HomeScreen({accountId,nativeBalance,balanceError,busy,agentOn,onConnect,onDisconnect,onSwap}:HomeScreenProps){
   const [network,setNetwork]=useState<NetworkOverview|null>(null);
   const [networkError,setNetworkError]=useState("");
   const [networkLoading,setNetworkLoading]=useState(true);
@@ -31,7 +28,6 @@ export function HomeScreen({accountId,nativeBalance,balanceError,busy,swaps,asse
     finally{setNetworkLoading(false);}
   };
   useEffect(()=>{void refreshNetwork();},[]);
-  const recentSwaps=swaps.slice(0,3);
   return <>
     <section className="greeting"><div><p className="eyebrow">YOUR WALLET</p><h1>{accountId?"Welcome back.":"Start with your wallet."}</h1></div><div className="secure-pill"><span/> Non-custodial</div></section>
     <article className="home-portfolio">
@@ -42,8 +38,6 @@ export function HomeScreen({accountId,nativeBalance,balanceError,busy,swaps,asse
     </article>
     <button className="primary-button home-swap-action" onClick={onSwap}><Activity size={16}/>Swap</button>
     <section className="home-summary">
-      <div className="section-heading compact"><div><p className="eyebrow">YOUR ACTIVITY</p><h2>Recent swaps</h2></div><button className="secondary-button" onClick={onActivity}>View activity <ArrowRight size={13}/></button></div>
-      {recentSwaps.length?recentSwaps.map(swap=><button className="intent-swap-history-row" key={swap.id} onClick={onActivity}><span>{assets.find(asset=>asset.assetId===swap.quote.originAsset)?.symbol??swap.quote.originAsset} → {assets.find(asset=>asset.assetId===swap.quote.destinationAsset)?.symbol??swap.quote.destinationAsset}</span><strong>{swap.status.replaceAll("_"," ")}</strong></button>):<p className="meme-disclaimer">Your saved Intents swaps will appear here. Start with Swap when you're ready.</p>}
       <div className="home-agent-status"><Bot size={15}/><span>Agent monitoring</span><strong>{agentOn?"On · notifications only":"Off"}</strong></div>
     </section>
     <section className="home-summary home-network-summary">
@@ -57,29 +51,30 @@ type ActivityScreenProps={
   swaps:IntentSwap[];
   selected:IntentSwap|null;
   assets:Asset[];
-  depositHash:string;
+  previewOutput:string|null;
+  repriceAccepted:boolean;
   statusError:string;
   busy:boolean;
   statusBusyId:string;
   onSelect:(swap:IntentSwap)=>void;
   onRefreshAll:()=>void;
   onRefresh:(id:string)=>void;
-  onDepositHashChange:(value:string)=>void;
   onSendNear:()=>void;
-  onSubmitDepositHash:()=>void;
+  onAcceptReprice:()=>void;
 };
 
 const swapStatusLabel=(status:string)=>status==="SUCCESS"?"Complete":status==="REFUNDED"?"Refunded":status==="FAILED"?"Failed":status==="INCOMPLETE_DEPOSIT"?"Incomplete deposit":status.replaceAll("_"," ").toLowerCase().replace(/^\w/,value=>value.toUpperCase());
 
-export function ActivityScreen({swaps,selected,assets,depositHash,statusError,busy,statusBusyId,onSelect,onRefreshAll,onRefresh,onDepositHashChange,onSendNear,onSubmitDepositHash}:ActivityScreenProps){
+export function ActivityScreen({swaps,selected,assets,previewOutput,repriceAccepted,statusError,busy,statusBusyId,onSelect,onRefreshAll,onRefresh,onSendNear,onAcceptReprice}:ActivityScreenProps){
   const assetLabel=(assetId:string)=>assets.find(asset=>asset.assetId===assetId)?.symbol??assetId;
   const selectedStatus=selected?.status??"";
   const failed=selected&&["REFUNDED","FAILED","INCOMPLETE_DEPOSIT"].includes(selectedStatus);
+  const depositQuoteExpired=Boolean(selected&&selected.status==="PENDING_DEPOSIT"&&Date.parse(selected.quote.expiresAt)<=Date.now());
   const depositDetected=selected&&(["KNOWN_DEPOSIT_TX","PROCESSING","SUCCESS","REFUNDED","INCOMPLETE_DEPOSIT"].includes(selectedStatus)||Boolean(selected.depositTxHash));
   const processingStarted=selected&&["PROCESSING","SUCCESS","REFUNDED"].includes(selectedStatus);
   return <section className="page-title activity-screen">
     <div className="watch-heading"><div><p className="eyebrow">YOUR SWAPS</p><h1>Activity</h1></div><button className="icon-button light" aria-label="Refresh saved swaps" onClick={onRefreshAll}><RefreshCw size={15}/></button></div>
-    <p>Track saved NEAR Intents swaps, deposit steps, and provider status. Rhea pool swaps are submitted directly by your wallet and appear in your wallet activity.</p>
+    <p>Track saved NEAR Intents swaps, deposit steps, and provider status. Pending swaps refresh every 15 seconds while Pocket Near is open and continue background checks about once a minute. Rhea pool swaps are submitted directly by your wallet and appear in your wallet activity.</p>
     {swaps.length===0?<div className="empty-activity"><Activity size={24}/><strong>No saved swaps yet</strong><span>When you prepare a live 1-Click deposit from Swap, it will appear here.</span></div>:<div className="activity-swap-list">{swaps.map(swap=><button className={`intent-swap-history-row ${selected?.id===swap.id?"active":""}`} key={swap.id} onClick={()=>onSelect(swap)}><span>{assetLabel(swap.quote.originAsset)} → {assetLabel(swap.quote.destinationAsset)}<small>{new Date(swap.createdAt).toLocaleString()}</small></span><strong>{swapStatusLabel(swap.status)}</strong></button>)}</div>}
     {statusError&&!selected&&<div className="execution-status error"><span>{statusError}</span><button className="secondary-button" onClick={onRefreshAll}>Retry</button></div>}
     {selected&&<section className="intent-swap-panel">
@@ -92,17 +87,19 @@ export function ActivityScreen({swaps,selected,assets,depositHash,statusError,bu
           return <div className={`swap-timeline-step ${complete?"complete":""} ${active?"current":""} ${failurePoint?"failed":""}`} key={label}><span>{failurePoint?<ShieldAlert size={12}/>:complete?<Check size={12}/>:<span>{index+1}</span>}</span><small>{failurePoint?swapStatusLabel(selected.status):label}</small></div>;
         })}
       </div>
+      {previewOutput&&<div className="execution-status off"><strong>Price changed before deposit</strong><span>Original estimate: {fmtExact(previewOutput,assets.find(asset=>asset.assetId===selected.quote.destinationAsset)?.decimals??0)} {assetLabel(selected.quote.destinationAsset)}. Current executable estimate: {fmtExact(selected.quote.amountOut,assets.find(asset=>asset.assetId===selected.quote.destinationAsset)?.decimals??0)} {assetLabel(selected.quote.destinationAsset)}.</span><label className="investment-choice"><input type="checkbox" checked={repriceAccepted} onChange={onAcceptReprice}/><span><strong>I reviewed the updated output and want to continue.</strong></span></label></div>}
       {selected.status==="PENDING_DEPOSIT"&&<div className="activity-next-step">
-        <strong>{selected.originChain==="near"?"Next: send the deposit from your NEAR wallet":"Next: deposit from your external wallet"}</strong>
-        <p>Send exactly {fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)} to the address below{selected.quote.depositMemo?" and include the required memo":""}. Pocket Near cannot send assets on another chain.</p>
-        {selected.originChain==="near"&&<button className="primary-button" onClick={onSendNear} disabled={busy||Boolean(selected.depositTxHash)}>{busy?<span className="loader small"/>:"Send from NEAR wallet"}</button>}
-        {!selected.depositTxHash&&<><label className="field chain-address">Deposit transaction hash<input value={depositHash} onChange={event=>onDepositHashChange(event.target.value)} placeholder="Enter the hash after sending" autoComplete="off"/></label><button className="secondary-button" onClick={onSubmitDepositHash} disabled={busy||!depositHash.trim()}>Notify 1-Click about deposit</button></>}
+        {depositQuoteExpired?<div className="execution-status error"><strong>Deposit quote expired</strong><span>Do not send funds to this address. Return to Swap and request a new quote.</span></div>:null}
+        {!depositQuoteExpired&&<><strong>{selected.originChain==="near"?"Next: send the deposit from your NEAR wallet":"Next: deposit from your external wallet"}</strong>
+        <p>Send exactly {fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)} to the address below{selected.quote.depositMemo?" and include the required memo":""}. Pocket Near cannot send assets on another chain.</p></>}
+        {selected.originChain==="near"&&<button className="primary-button" onClick={onSendNear} disabled={busy||depositQuoteExpired||Boolean(selected.depositTxHash)||Boolean(previewOutput&&!repriceAccepted)}>{busy?<span className="loader small"/>:"Send from NEAR wallet"}</button>}
+        {selected.originChain!=="near"&&!selected.depositTxHash&&<p className="meme-disclaimer">Pocket Near will detect the deposit and update this status automatically. Send only the exact amount shown, and include the required memo.</p>}
       </div>}
       {["KNOWN_DEPOSIT_TX","PROCESSING"].includes(selected.status)&&<p className="activity-next-step">Deposit received. The provider is processing the swap; refresh status for the latest update.</p>}
       {selected.status==="SUCCESS"&&<p className="activity-next-step">The provider reports this swap as complete.</p>}
-      {failed&&<p className="activity-next-step warning">{selected.status==="REFUNDED"?"The provider reports a refund. Check the transaction details before retrying.":selected.status==="INCOMPLETE_DEPOSIT"?"The provider marked this deposit incomplete. Review the deposit and memo details.":"The provider reports the swap failed. Review the details before retrying."}</p>}
+      {failed&&<p className="activity-next-step warning">{selected.status==="REFUNDED"?"The provider reports a refund. Confirm it arrived in your refund address before starting another swap.":selected.status==="INCOMPLETE_DEPOSIT"?"The provider marked this deposit incomplete. Check the required amount and memo, and wait for the provider’s final status before sending more funds.":"The provider reports the swap failed. Check transaction details and balances before requesting a fresh quote."}</p>}
       {(statusError||selected.status==="PENDING_DEPOSIT")&&statusError&&<div className="execution-status error"><strong>Status update failed</strong><span>{statusError}</span><button className="secondary-button" onClick={()=>onRefresh(selected.id)}>Retry status refresh</button></div>}
-      <details className="swap-technical-details"><summary>Deposit and transaction details</summary><div className="intent-swap-facts"><span>Deposit amount</span><strong>{fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)}</strong><span>Estimated output</span><strong>{fmtExact(selected.quote.amountOut,assets.find(asset=>asset.assetId===selected.quote.destinationAsset)?.decimals??0)} {assetLabel(selected.quote.destinationAsset)}</strong><span>Deposit address</span><code>{selected.quote.depositAddress??"Not provided"}</code>{selected.quote.depositMemo&&<><span>Required memo</span><code>{selected.quote.depositMemo}</code></>}{selected.depositTxHash&&<><span>Transaction hash</span><code>{selected.depositTxHash}</code></>}</div>{selected.depositTxHash&&selected.originChain==="near"&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(selected.depositTxHash)}`} target="_blank" rel="noreferrer">View NEAR transaction <ExternalLink size={13}/></a>}</details>
+      {(!depositQuoteExpired&&(!previewOutput||repriceAccepted))&&<details className="swap-technical-details"><summary>Deposit and transaction details</summary><div className="intent-swap-facts"><span>Deposit amount</span><strong>{fmtExact(selected.quote.amountIn,assets.find(asset=>asset.assetId===selected.quote.originAsset)?.decimals??0)} {assetLabel(selected.quote.originAsset)}</strong><span>Estimated output</span><strong>{fmtExact(selected.quote.amountOut,assets.find(asset=>asset.assetId===selected.quote.destinationAsset)?.decimals??0)} {assetLabel(selected.quote.destinationAsset)}</strong><span>Deposit address</span><code>{selected.quote.depositAddress??"Not provided"}</code>{selected.quote.depositMemo&&<><span>Required memo</span><code>{selected.quote.depositMemo}</code></>}{selected.depositTxHash&&<><span>Transaction hash</span><code>{selected.depositTxHash}</code></>}</div>{selected.depositTxHash&&selected.originChain==="near"&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(selected.depositTxHash)}`} target="_blank" rel="noreferrer">View NEAR transaction <ExternalLink size={13}/></a>}</details>}
       <small>Quote created {new Date(selected.createdAt).toLocaleString()} · last updated {new Date(selected.updatedAt).toLocaleString()}</small>
     </section>}
   </section>;

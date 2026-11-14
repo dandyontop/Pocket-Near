@@ -67,9 +67,11 @@ export default function App(){
   const [masterLock,setMasterLock]=useState(false);
   const [quote,setQuote]=useState<QuoteView|null>(null);
   const [decision,setDecision]=useState<{allowed:boolean;reason?:string}|null>(null);
+  const [balanceCheck,setBalanceCheck]=useState<{supported:boolean;symbol:string;amount:string|null;decimals:number;nativeBalance:string|null;nativeReserve:string}|null>(null);
+  const [repricing,setRepricing]=useState<{swapId:string;previewOutput:string}|null>(null);
+  const [repriceAccepted,setRepriceAccepted]=useState(false);
   const [intentSwaps,setIntentSwaps]=useState<IntentSwap[]>([]);
   const [activeIntentSwap,setActiveIntentSwap]=useState<IntentSwap|null>(null);
-  const [depositHash,setDepositHash]=useState("");
   const [swapStatusError,setSwapStatusError]=useState("");
   const [swapStatusBusyId,setSwapStatusBusyId]=useState("");
   const [events,setEvents]=useState<Array<{event_type:string;details:Record<string,unknown>;created_at:string}>>([]);
@@ -184,7 +186,7 @@ export default function App(){
     };
     void start();
     const c=getConnector();
-    const onSignOut=()=>{setAccount(null);setQuote(null);setDecision(null);setIntentSwaps([]);setActiveIntentSwap(null);setDepositHash("");};
+    const onSignOut=()=>{setAccount(null);setQuote(null);setDecision(null);setIntentSwaps([]);setActiveIntentSwap(null);};
     c.on("wallet:signOut",onSignOut);
     return()=>{c.off("wallet:signOut",onSignOut);};
   },[loadDashboard]);
@@ -196,6 +198,7 @@ export default function App(){
     setError("");
     setQuote(null);
     setDecision(null);
+    setBalanceCheck(null);
     setExecutionStatus(null);
     setBusy(true);
     try{
@@ -207,14 +210,24 @@ export default function App(){
       if(!target||!refund)throw new Error("Enter the destination and refund addresses for the selected chains before requesting a quote.");
       const baseAmount=toBase(amount,from.decimals);
       if(BigInt(baseAmount)<=0n)throw new Error("Enter an amount greater than zero.");
+      if(isNear(from)){
+        const funds=await api.assetBalance(from.assetId,from.symbol,from.decimals);
+        setBalanceCheck(funds);
+        const reserve=BigInt(funds.nativeReserve);
+        if(funds.supported&&funds.amount!==null&&(BigInt(funds.amount)<BigInt(baseAmount)||(from.assetId==="near:native"&&BigInt(funds.amount)<BigInt(baseAmount)+reserve)))throw new Error(`Insufficient ${funds.symbol} balance for this swap and transaction fees. Add funds or reduce the amount, then try again.`);
+        if(funds.nativeBalance!==null&&BigInt(funds.nativeBalance)<reserve)throw new Error("Not enough NEAR for transaction fees. Keep at least 0.02 NEAR available, then try again.");
+      }
       const slippage=Number(maxSlippage);
       if(!Number.isInteger(slippage)||slippage<1||slippage>500)throw new Error("Slippage tolerance must be between 1 and 500 basis points.");
       const input:QuoteInput={originAsset:from.assetId,destinationAsset:to.assetId,amount:baseAmount,sender:account.accountId,refundTo:refund,recipient:target,slippageToleranceBps:slippage};
       const data=from.assetId.startsWith("near:")&&to.assetId.startsWith("near:")?await api.rheaQuote({originAsset:input.originAsset,destinationAsset:input.destinationAsset,amount:input.amount,sender:input.sender,slippageToleranceBps:input.slippageToleranceBps}):await api.quote(input);setQuote(data.quote);setRheaRiskAcknowledged(false);setSwapStep("review");
-      if(policy&&data.quote.provider!=="rhea"){const result=await api.evaluate(data.quote.id,false,userInitiated);setDecision(result.decision);if(!result.decision.allowed){await api.events().then(v=>setEvents(v.events));}}
+      if(data.quote.provider!=="rhea"){
+        if(policies.some(saved=>saved.active)){const result=await api.evaluate(data.quote.id,false,userInitiated);setDecision(result.decision);if(!result.decision.allowed){await api.events().then(v=>setEvents(v.events));}}
+        else setDecision({allowed:true});
+      }
       return data.quote;
-    }catch(e){setError(e instanceof Error?e.message:"Could not load a live quote.");return null;}finally{setBusy(false);}
-  },[account,from,to,amount,maxSlippage,policy,recipient,refundTo]);
+    }catch(e){const message=e instanceof Error?e.message:"Could not load a live quote.";const lower=message.toLowerCase();setError(lower.includes("minimum")||lower.includes("too small")||lower.includes("no route")?`${message} Try a larger amount or choose another asset pair.`:message);return null;}finally{setBusy(false);}
+  },[account,from,to,amount,maxSlippage,policy,policies,recipient,refundTo]);
 
   const connect=async()=>{setBusy(true);setError("");try{const a=await connectWallet();const challenge=await api.walletChallenge(a.accountId);const signed=await signPolicy(challenge.message,challenge.recipient,challenge.nonce);await api.walletVerify({...signed,payload:{message:challenge.message,recipient:challenge.recipient,nonce:challenge.nonce}});try{window.localStorage.removeItem(disconnectedWalletKey);}catch{}setAccount(a);setProfileAccountId(a.accountId);await loadDashboard();setWalletSignInRequired(false);setNotice(`Connected ${a.accountId}`);}catch(e){setError(e instanceof Error?e.message:"Wallet connection failed.");}finally{setBusy(false);}};
   const disconnect=async()=>{
@@ -230,7 +243,7 @@ export default function App(){
     }catch(error){setError(`Disconnected from Pocket Near, but the wallet provider did not confirm sign-out: ${error instanceof Error?error.message:"unknown provider error"}`);}
     finally{
       if(timeoutId)window.clearTimeout(timeoutId);
-      setAccount(null);setQuote(null);setDecision(null);setExecutionStatus(null);setIntentSwaps([]);setActiveIntentSwap(null);setDepositHash("");setBusy(false);
+      setAccount(null);setQuote(null);setDecision(null);setExecutionStatus(null);setIntentSwaps([]);setActiveIntentSwap(null);setBusy(false);
     }
     if(storageFailed)setError("Wallet was disconnected for this session, but this browser could not save that preference. It may reconnect when Pocket Near is reopened.");
   };
@@ -373,7 +386,7 @@ export default function App(){
   const refreshEvents=async()=>{try{setEvents((await api.events()).events);}catch(e){setError(e instanceof Error?e.message:"Could not refresh activity.");}};
   const refreshPositions=async()=>{setPositionsLoading(true);setPositionsError("");try{const result=await api.positions();setPositions(result.positions);setPositionsCoverage(result.coverage);setRnearStatus(result.rnear??null);}catch(e){setPositionsError(e instanceof Error?e.message:"Could not load NEAR positions.");}finally{setPositionsLoading(false);}};
   const rememberIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setIntentSwaps(current=>[swap,...current.filter(item=>item.id!==swap.id)]);};
-  const selectIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setDepositHash(swap.depositTxHash??"");setSwapStatusError("");};
+  const selectIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setSwapStatusError("");};
   const refreshIntentSwaps=async()=>{setSwapStatusError("");try{const result=await api.intentSwaps();setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:current);}catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");}};
   const startIntentSwap=async()=>{
     if(!quote||quote.provider!=="one-click")return;
@@ -381,7 +394,9 @@ export default function App(){
     try{
       const result=await api.startIntentSwap(quote.id);
       rememberIntentSwap(result.swap);
-      setDepositHash(result.swap.depositTxHash??"");
+      const preview=BigInt(quote.amountOut),live=BigInt(result.swap.quote.amountOut);
+      const changeBps=preview===0n?0n:(preview>live?preview-live:live-preview)*10_000n/preview;
+      setRepricing(changeBps>50n?{swapId:result.swap.id,previewOutput:quote.amountOut}:null);setRepriceAccepted(changeBps<=50n);
       setNotice(result.reused?"Opened your existing deposit instructions.":"Live deposit quote prepared. Review the amount and address before funding it.");
       setTab("Activity");
     }catch(e){setError(e instanceof Error?e.message:"Could not prepare an executable Intents quote.");}
@@ -392,16 +407,6 @@ export default function App(){
     try{rememberIntentSwap((await api.refreshIntentSwap(id)).swap);}
     catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not refresh the Intents swap status.");}
     finally{setSwapStatusBusyId("");}
-  };
-  const submitIntentDepositHash=async()=>{
-    if(!activeIntentSwap||!depositHash.trim())return;
-    setBusy(true);setSwapStatusError("");
-    try{
-      const swap=(await api.submitIntentDeposit(activeIntentSwap.id,depositHash.trim())).swap;
-      rememberIntentSwap(swap);setDepositHash(swap.depositTxHash??depositHash.trim());
-      setNotice("Deposit transaction sent to 1-Click for verification. The swap is not complete until Explorer reports success.");
-    }catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not notify 1-Click about this deposit.");}
-    finally{setBusy(false);}
   };
   const sendNearIntentDeposit=async()=>{
     if(!account||!activeIntentSwap)return;
@@ -414,10 +419,9 @@ export default function App(){
       }
       const hash=nearTransactionHash(result);
       if(!hash){
-        setExecutionStatus({kind:"submitted",message:"The wallet returned without a transaction hash. Verify the transaction in your wallet, then enter its hash below before notifying 1-Click."});
+        setExecutionStatus({kind:"submitted",message:"The wallet returned without a transaction hash. Pocket Near will check the deposit address automatically."});
         return;
       }
-      setDepositHash(hash);
       setExecutionStatus({kind:"submitted",message:"Your wallet submitted the NEAR deposit. Sending its hash to 1-Click for verification.",txHash:hash});
       try{
         const swap=(await api.submitIntentDeposit(activeIntentSwap.id,hash)).swap;
@@ -437,14 +441,17 @@ export default function App(){
   const loadPrices=async()=>{setWatchLoading(true);try{const [market,watch,alertData]=await Promise.all([api.prices(),api.watchlist(),api.alerts()]);setPrices(market.rows);setPriceSource(market.source);setWatchlist(watch.symbols);setAlerts(alertData.alerts);}catch(e){setError(e instanceof Error?e.message:"Market data could not be loaded.");}finally{setWatchLoading(false);}};
   const loadDiscover=async()=>{setDiscoverLoading(true);setDiscoverError("");try{const [earnData,appData,gameData]=await Promise.all([api.earn(),api.apps(),api.games()]);setEarn(earnData.protocols);setEarnSource(earnData.source);setApps(appData.apps);setGames(gameData.games);}catch(e){const message=e instanceof Error?e.message:"Explore data could not be loaded.";setDiscoverError(message);setError(message);}finally{setDiscoverLoading(false);}};
   const loadMemeBoard=async()=>{try{setMemeBoard(await api.memeBoard());setMemeBoardError("");}catch(e){const message=e instanceof Error?e.message:"Meme asset data could not be loaded.";setMemeBoardError(message);setError(message);}};
-  useEffect(()=>{if(!account){setIntentSwaps([]);setActiveIntentSwap(null);setDepositHash("");return;}let active=true;void api.intentSwaps().then(result=>{if(!active)return;setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:result.swaps[0]??null);setDepositHash(current=>current||result.swaps[0]?.depositTxHash||"");}).catch(e=>{if(active)setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");});return()=>{active=false;};},[account?.accountId]);
+  useEffect(()=>{if(!account){setIntentSwaps([]);setActiveIntentSwap(null);return;}let active=true;void api.intentSwaps().then(result=>{if(!active)return;setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:result.swaps[0]??null);}).catch(e=>{if(active)setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");});return()=>{active=false;};},[account?.accountId]);
   useEffect(()=>{
-    if(!account||!activeIntentSwap?.depositTxHash||["SUCCESS","FAILED","REFUNDED","INCOMPLETE_DEPOSIT"].includes(activeIntentSwap.status))return;
+    const pending=intentSwaps.filter(swap=>["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING"].includes(swap.status));
+    if(!account||!pending.length)return;
     let active=true;
-    const poll=async()=>{try{const swap=(await api.refreshIntentSwap(activeIntentSwap.id)).swap;if(active)rememberIntentSwap(swap);}catch(e){if(active)setSwapStatusError(e instanceof Error?e.message:"Could not refresh the Intents swap status.");}};
-    const timer=window.setInterval(()=>void poll(),10_000);
+    let inFlight=false;
+    const poll=async()=>{if(inFlight)return;inFlight=true;try{const results=await Promise.allSettled(pending.map(swap=>api.refreshIntentSwap(swap.id)));if(!active)return;for(const result of results){if(result.status==="fulfilled")rememberIntentSwap(result.value.swap);else setSwapStatusError(result.reason instanceof Error?result.reason.message:"Could not refresh a pending swap status.");}}finally{inFlight=false;}};
+    void poll();
+    const timer=window.setInterval(()=>void poll(),15_000);
     return()=>{active=false;window.clearInterval(timer);};
-  },[account?.accountId,activeIntentSwap?.id,activeIntentSwap?.depositTxHash,activeIntentSwap?.status]);
+  },[account?.accountId,intentSwaps.map(swap=>`${swap.id}:${swap.status}`).join("|")]);
   useEffect(()=>{if(tab==="Explore"&&(exploreSection==="Earn"||exploreSection==="Apps & games"))void loadDiscover();if(tab==="Explore"&&exploreSection==="Earn")void refreshPositions();if(tab==="Profile")void refreshEvents();},[tab,exploreSection]);
   useEffect(()=>{if(tab==="Swap"){void loadMemeBoard();return;}if(tab!=="Explore"||exploreSection!=="Markets")return;let active=true;const refresh=()=>{if(active){void loadPrices();void loadMemeBoard();}};refresh();const id=window.setInterval(refresh,30_000);return()=>{active=false;window.clearInterval(id);};},[tab,exploreSection]);
   useEffect(()=>{if(!account){setNativeBalance(null);setPortfolioError("");return;}let active=true;void api.portfolio().then(data=>{if(!active)return;const near=data.balances.find(b=>b.symbol==="NEAR");setNativeBalance(near?fmt(near.amount,near.decimals):null);setPortfolioError(data.failures.join(" "));}).catch(e=>{if(active)setPortfolioError(e instanceof Error?e.message:"NEAR balance is unavailable.");});return()=>{active=false;};},[account?.accountId]);
@@ -466,8 +473,8 @@ export default function App(){
     <main className="content">
       {error&&<div className="alert error"><ShieldAlert size={17}/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss"><X size={15}/></button></div>}
       {notice&&<div className="alert success"><Check size={17}/><span>{notice}</span><button onClick={()=>setNotice("")} aria-label="Dismiss"><X size={15}/></button></div>}
-      {tab==="Home"&&<><Suspense fallback={<div className="empty-activity">Loading Home…</div>}><HomeScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} balanceError={portfolioError} busy={busy} swaps={intentSwaps} assets={assets} agentOn={agentOn} onConnect={()=>void connect()} onDisconnect={()=>void disconnect()} onSwap={()=>setTab("Swap")} onActivity={()=>setTab("Activity")}/></Suspense><details className="home-more-network" onToggle={event=>setNetworkDetailsOpen(event.currentTarget.open)}><summary>More network analytics and scenarios</summary>{networkDetailsOpen&&<Suspense fallback={<div className="empty-activity">Loading network details…</div>}><FlywheelScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} busy={busy} onConnect={()=>void connect()} onStake={amount=>void submitRNearStake(amount)} showStaking={false}/></Suspense>}</details></>}
-      {tab==="Activity"&&<Suspense fallback={<div className="empty-activity">Loading Activity…</div>}><ActivityScreen swaps={intentSwaps} selected={activeIntentSwap??intentSwaps[0]??null} assets={assets} depositHash={depositHash} statusError={swapStatusError} busy={busy} statusBusyId={swapStatusBusyId} onSelect={selectIntentSwap} onRefreshAll={()=>void refreshIntentSwaps()} onRefresh={id=>void refreshIntentSwap(id)} onDepositHashChange={setDepositHash} onSendNear={()=>void sendNearIntentDeposit()} onSubmitDepositHash={()=>void submitIntentDepositHash()}/></Suspense>}
+      {tab==="Home"&&<><Suspense fallback={<div className="empty-activity">Loading Home…</div>}><HomeScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} balanceError={portfolioError} busy={busy} agentOn={agentOn} onConnect={()=>void connect()} onDisconnect={()=>void disconnect()} onSwap={()=>setTab("Swap")}/></Suspense><details className="home-more-network" onToggle={event=>setNetworkDetailsOpen(event.currentTarget.open)}><summary>More network analytics and scenarios</summary>{networkDetailsOpen&&<Suspense fallback={<div className="empty-activity">Loading network details…</div>}><FlywheelScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} busy={busy} onConnect={()=>void connect()} onStake={amount=>void submitRNearStake(amount)} showStaking={false}/></Suspense>}</details></>}
+      {tab==="Activity"&&<Suspense fallback={<div className="empty-activity">Loading Activity…</div>}><ActivityScreen swaps={intentSwaps} selected={activeIntentSwap??intentSwaps[0]??null} assets={assets} previewOutput={repricing?.swapId===(activeIntentSwap??intentSwaps[0])?.id?repricing?.previewOutput??null:null} repriceAccepted={repriceAccepted} statusError={swapStatusError} busy={busy} statusBusyId={swapStatusBusyId} onSelect={selectIntentSwap} onRefreshAll={()=>void refreshIntentSwaps()} onRefresh={id=>void refreshIntentSwap(id)} onSendNear={()=>void sendNearIntentDeposit()} onAcceptReprice={()=>setRepriceAccepted(value=>!value)}/></Suspense>}
       {tab==="Explore"&&<>
         <section className="page-title"><p className="eyebrow">DISCOVER NEAR</p><h1>Explore</h1><p>Find markets, earn opportunities, apps, games and agents.</p></section>
         <div className="discover-segments explore-categories" role="tablist" aria-label="Explore categories">
@@ -499,6 +506,7 @@ export default function App(){
             <div className="routebook-route-caption"><span>INTENT ROUTE</span><span>Origin <i aria-hidden="true"/> Destination</span></div>
             <div className="pair-line"><div className="asset-select"><select value={fromId} disabled={busy} onChange={event=>{setFromId(event.target.value);clearActiveQuote();}} aria-label="Origin asset">{assets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetOptionLabel(asset)}</option>)}</select><ChevronDown size={14}/></div><button className="swap-directions" aria-label="Reverse pair" disabled={busy} onClick={()=>{setFromId(toId);setToId(fromId);clearActiveQuote();}}><ArrowDownUp size={16}/></button><div className="asset-select"><select value={toId} disabled={busy} onChange={event=>{setToId(event.target.value);clearActiveQuote();}} aria-label="Destination asset">{assets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetOptionLabel(asset)}</option>)}</select><ChevronDown size={14}/></div></div>
               <label className="amount-label">Amount<input inputMode="decimal" value={amount} disabled={busy} onChange={event=>{setAmount(event.target.value);clearActiveQuote();}} aria-label="Amount"/><span>{from?.symbol??""}</span></label>
+              {Number(maxSlippage)>100&&<p className="flywheel-note">High slippage tolerance: {(Number(maxSlippage)/100).toFixed(2)}%. Your swap may execute at a lower output; review the minimum output before continuing.</p>}
               {to&&to.blockchain.toLowerCase()!=="near"&&<label className="field chain-address">Destination address · {to.blockchain}<input value={recipient} disabled={busy} onChange={event=>{setRecipient(event.target.value);clearActiveQuote();}} placeholder={`Your ${to.blockchain} address`} autoComplete="off"/></label>}
               {from&&from.blockchain.toLowerCase()!=="near"&&<label className="field chain-address">Refund address · {from.blockchain}<input value={refundTo} disabled={busy} onChange={event=>{setRefundTo(event.target.value);clearActiveQuote();}} placeholder={`Your ${from.blockchain} address`} autoComplete="off"/></label>}
               <button className="primary-button" onClick={()=>void fetchQuote()} disabled={!account||busy||!assetsReady}>{busy?<span className="loader small"/>:<Sparkles size={16}/>}Get live quote</button>
@@ -516,18 +524,22 @@ export default function App(){
                 <div><span>Destination address</span><b>{recipient||(to?.blockchain.toLowerCase()==="near"?account?.accountId:"Not provided")}</b></div>
                 <div><span>Refund address</span><b>{refundTo||(from?.blockchain.toLowerCase()==="near"?account?.accountId:"Not provided")}</b></div>
               </div>
+              {from?.blockchain.toLowerCase()==="near"&&balanceCheck&&<p className="meme-disclaimer">{balanceCheck.supported?`Balance checked: ${fmtExact(balanceCheck.amount??"0",balanceCheck.decimals)} ${balanceCheck.symbol}. ${balanceCheck.nativeBalance!==null?`Fee reserve: ${fmtExact(balanceCheck.nativeBalance,24)} NEAR available.`:""}`:`Balance could not be checked for ${from.symbol}. Verify it in the source wallet before depositing.`}</p>}
+              {from&&from.blockchain.toLowerCase()!=="near"&&<p className="meme-disclaimer">Pocket Near cannot read this external-chain balance. Check your source wallet before depositing.</p>}
+              {quote.slippageBps>100&&<p className="flywheel-note">High slippage tolerance: {(quote.slippageBps/100).toFixed(2)}%. The provider may return less than the estimate, down to the minimum output shown above.</p>}
               {quote.provider==="rhea"?<>
                 <p className="meme-disclaimer">Next action: your wallet will show the Rhea pool swap call and exact NEAR transaction details before you approve it.</p>
                 {rheaRiskNeedsAcknowledgement&&<div className="execution-status off"><strong>Review current Rhea market signals</strong>{rheaRiskMessages.map((message,index)=><span key={`${index}:${message}`}>{message}</span>)}<small>These data warnings do not prove a scam, wash trading or bot activity. They are not a security audit.</small><label className="investment-choice"><input type="checkbox" checked={rheaRiskAcknowledged} onChange={event=>setRheaRiskAcknowledged(event.target.checked)}/><span><strong>I reviewed these market signals and want to continue.</strong></span></label></div>}
                 {(quote.raw.registration as {ready?:boolean}|undefined)?.ready===false&&<div className="execution-status error"><strong>Route registration needed</strong><span>Rhea reports route tokens that are not registered for this account. Set up the required wallet-approved registrations, then request a fresh quote.</span><button className="secondary-button" onClick={()=>void registerRheaQuote()} disabled={busy}>Register tokens in wallet</button></div>}
                 <button className="primary-button" onClick={()=>void submitRheaSwap()} disabled={busy||!account||(quote.raw.registration as {ready?:boolean}|undefined)?.ready!==true||Boolean(rheaRiskNeedsAcknowledgement&&!rheaRiskAcknowledged)||quoteExpired}>{busy?<span className="loader small"/>:"Confirm swap in wallet"}</button>
               </>:<>
-                <div className={`policy-status ${decision?.allowed?"ok":"blocked"}`}><Shield size={15}/><span>{decision?.allowed?"Policy check passed · wallet confirmation is still required":decision?.reason??(policy?"Policy check required":"No active signed policy · set one up in Profile → Safety")}</span></div>
+                <div className={`policy-status ${decision?.allowed?"ok":"blocked"}`}><Shield size={15}/><span>{decision?.allowed?(policies.some(saved=>saved.active)?"Policy check passed · wallet confirmation is still required":"No active policy · wallet confirmation is still required"):decision?.reason??(policies.some(saved=>saved.active)?"Policy check required":"No active policy · wallet confirmation is still required")}</span></div>
                 {policy&&<button className="secondary-button" onClick={()=>void runAgent()} disabled={busy}>{busy?<span className="loader small"/>:null}{decision?.allowed?"Recheck policy":"Check policy"}</button>}
                 <p className="meme-disclaimer">If you continue, the deposit instructions will appear in Activity. Your wallet must sign and submit the transfer; the quote itself does not move funds.</p>
                 {decision?.allowed&&<button className="primary-button" onClick={()=>void startIntentSwap()} disabled={busy||quote.stale||quoteExpired}>{busy?<span className="loader small"/>:"Continue to Activity"}</button>}
               </>}
-              <button className="secondary-button" onClick={()=>{clearActiveQuote();setError("");}}>Edit swap</button>
+                {(quote.stale||quoteExpired)&&<button className="primary-button" onClick={()=>void fetchQuote()} disabled={busy}>{busy?<span className="loader small"/>:"Refresh quote"}</button>}
+                <button className="secondary-button" onClick={()=>{clearActiveQuote();setError("");}}>Edit swap</button>
               <button className="secondary-button share-preview" onClick={sharePreview}><ArrowUpRight size={14}/>Share quote preview</button>
             </div>}
             {executionStatus&&<div className={`execution-status ${executionStatus.kind}`} role="status"><strong>{executionStatus.kind==="submitted"?"Wallet transaction submitted":"Transaction error"}</strong><span>{executionStatus.message}</span>{executionStatus.txHash&&<a href={`https://nearblocks.io/txns/${encodeURIComponent(executionStatus.txHash)}`} target="_blank" rel="noreferrer">View transaction on NearBlocks <ExternalLink size={13}/></a>}</div>}
