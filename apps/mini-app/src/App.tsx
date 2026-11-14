@@ -5,7 +5,7 @@ import { canonicalPolicy } from "@pocket-near/shared";
 import { api, ApiRequestError } from "./lib/api.js";
 import { CreatePasswordCard, UnlockModal } from "./components/SecurityDialogs.js";
 import { PublicLanding } from "./components/PublicLanding.js";
-import { connectWallet, disconnectWallet, executeIntentDeposit, executeRheaSwap, executeRNearStake, getConnector, registerRheaRoute, restoreWallet, signPolicy, type WalletAccount } from "./lib/wallet.js";
+import { connectWallet, disconnectWallet, executeIntentDeposit, executeRheaSwap, executeRNearStake, getConnector, registerIntentTokenReceiver, registerRheaRoute, restoreWallet, signPolicy, type WalletAccount } from "./lib/wallet.js";
 import { getRheaMarketRiskFlags } from "./lib/rheaRisk.js";
 
 const HomeScreen=lazy(()=>import("./components/WorkspaceSections.js").then(module=>({default:module.HomeScreen})));
@@ -477,6 +477,21 @@ export default function App(){
     if(!account||!activeIntentSwap)return;
     setBusy(true);setError("");setSwapStatusError("");setExecutionStatus(null);
     try{
+      const tokenContract=activeIntentSwap.originTokenContract;
+      const depositAddress=activeIntentSwap.quote.depositAddress??"";
+      const depositSymbol=assets.find(asset=>asset.assetId===activeIntentSwap.quote.originAsset)?.symbol??"token";
+      if(tokenContract){
+        const storage=await api.tokenRecipientStorage(activeIntentSwap.quote.originAsset,depositAddress);
+        if(storage.tokenContract!==tokenContract)throw new Error("The supported token contract changed since this quote was created. Request a fresh quote before depositing.");
+        if(!storage.registered){
+          setExecutionStatus({kind:"submitted",message:`The ${depositSymbol} deposit account needs one-time storage registration. Review and approve the registration fee in your wallet before the token transfer is sent.`});
+          await registerIntentTokenReceiver({accountId:account.accountId,tokenContract:storage.tokenContract,recipient:depositAddress,minimumDeposit:storage.minimumDeposit??""});
+          const verified=await api.tokenRecipientStorage(activeIntentSwap.quote.originAsset,depositAddress);
+          if(!verified.registered)throw new Error("The wallet approved recipient registration, but the token contract does not show it yet. The deposit transfer was not sent; refresh and check again.");
+          setExecutionStatus(null);
+          setNotice(`${depositSymbol} deposit account registered. Review the token transfer in your wallet to continue.`);
+        }
+      }
       const result=await executeIntentDeposit({accountId:account.accountId,originChain:activeIntentSwap.originChain,tokenContract:activeIntentSwap.originTokenContract,amount:activeIntentSwap.quote.amountIn,depositAddress:activeIntentSwap.quote.depositAddress??"",...(activeIntentSwap.quote.depositMemo?{memo:activeIntentSwap.quote.depositMemo}:{})});
       if(result&&typeof result==="object"){
         const status=(result as Record<string,unknown>).status;

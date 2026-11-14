@@ -25,6 +25,7 @@ export const api={
   walletChallenge:(accountId:string)=>request<{message:string;recipient:string;nonce:string}>("/api/wallet/challenge",{method:"POST",body:JSON.stringify({accountId})}),
   walletVerify:(envelope:unknown)=>request<{accountId:string}>("/api/wallet/verify",{method:"POST",body:JSON.stringify(envelope)}),
   assets:()=>request<{assets:Asset[]}>("/api/assets"),
+  tokenRecipientStorage:(assetId:string,recipient:string)=>request<{registered:boolean;minimumDeposit:string|null;tokenContract:string}>("/api/near/token-storage",{method:"POST",body:JSON.stringify({assetId,recipient})}),
   memeBoard:()=>request<MemeBoard>("/api/meme/board"),
   rheaQuote:(input:{originAsset:string;destinationAsset:string;amount:string;sender:string;slippageToleranceBps:number})=>request<{quote:QuoteView;source:string;autoEligible:boolean}>("/api/rhea/quote",{method:"POST",body:JSON.stringify(input)}),
   voteMeme:(assetId:string,vote:MemeVote)=>request<{saved:boolean}>("/api/meme/vote",{method:"PUT",body:JSON.stringify({assetId,vote})}),

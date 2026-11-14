@@ -454,6 +454,28 @@ app.get("/api/assets",asyncRoute(async (_req,res) => {
   res.json({assets});
 }));
 
+app.post("/api/near/token-storage",requireSession,asyncRoute(async(req,res)=>{
+  const body=z.object({assetId:z.string().min(1).max(160),recipient:z.string().min(2).max(64)}).safeParse(req.body);
+  if(!body.success)return fail(res,400,"A supported NEAR token and recipient account are required.");
+  if(!(/^[0-9a-f]{64}$/.test(body.data.recipient)||/^[a-z0-9_-]+(?:[.-][a-z0-9_-]+)*$/.test(body.data.recipient)))return fail(res,400,"The NEAR token recipient account is invalid.");
+  const token=await getSupportedToken(body.data.assetId);
+  if(!token||token.blockchain.toLowerCase()!=="near"||!token.contractAddress||!/^[a-z0-9._-]{2,64}$/.test(token.contractAddress))return fail(res,422,"The selected asset is not a supported NEAR fungible token.");
+  try{
+    const balance=await nearProvider.callFunction({contractId:token.contractAddress,method:"storage_balance_of",args:{account_id:body.data.recipient}});
+    if(balance!==null){
+      if(!balance||typeof balance!=="object"||Array.isArray(balance)||!/^\d+$/.test(String((balance as Record<string,unknown>).total??"")))return fail(res,502,"The token contract returned an invalid recipient storage balance.");
+      return res.json({registered:true,minimumDeposit:null,tokenContract:token.contractAddress});
+    }
+    const bounds=await nearProvider.callFunction({contractId:token.contractAddress,method:"storage_balance_bounds",args:{}});
+    const minimum= bounds&&typeof bounds==="object"&&!Array.isArray(bounds)?String((bounds as Record<string,unknown>).min??""):"";
+    if(!/^\d+$/.test(minimum)||BigInt(minimum)<=0n)return fail(res,502,"The token contract did not return a valid minimum storage deposit.");
+    res.json({registered:false,minimumDeposit:minimum,tokenContract:token.contractAddress});
+  }catch(error){
+    const message=error instanceof Error?error.message:"NEAR token storage check failed.";
+    fail(res,502,`Could not check recipient registration on ${token.symbol}: ${message}`);
+  }
+}));
+
 app.get("/api/rhea/pools",requireSession,asyncRoute(async(_req,res)=>{
   try{const markets=await getRheaMarkets();res.setHeader("Cache-Control","private, max-age=45");res.json({markets,source:"GeckoTerminal Rhea pools + Rhea on-chain frozen-token list",updatedAt:new Date().toISOString(),coverage:"Tokens in the first five Rhea pool pages sorted by 24-hour volume"});}
   catch(error){fail(res,(error as {status?:number}).status??502,"Rhea pool market data is temporarily unavailable.");}

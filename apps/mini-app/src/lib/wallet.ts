@@ -73,6 +73,20 @@ export async function executeIntentDeposit(input:{accountId:string;originChain:s
   if(input.memo)throw new Error("This native NEAR deposit requires a memo that a plain NEAR transfer cannot attach. Use a wallet flow that supports the provider's deposit instructions.");
   return activeWallet.signAndSendTransaction({receiverId:input.depositAddress,actions:[{type:"Transfer",params:{deposit:input.amount}}]});
 }
+export async function registerIntentTokenReceiver(input:{accountId:string;tokenContract:string;recipient:string;minimumDeposit:string}):Promise<unknown>{
+  if(!activeWallet?.signAndSendTransaction||activeAccountId!==input.accountId)throw new Error("Reconnect the wallet account used for this quote before registering the token recipient.");
+  if(!/^[a-z0-9._-]{2,64}$/.test(input.tokenContract)||!(/^[0-9a-f]{64}$/.test(input.recipient)||/^[a-z0-9_-]+(?:[.-][a-z0-9_-]+)*$/.test(input.recipient))||!/^\d+$/.test(input.minimumDeposit)||BigInt(input.minimumDeposit)<=0n)throw new Error("The token recipient registration details are invalid.");
+  const result=await activeWallet.signAndSendTransaction({receiverId:input.tokenContract,actions:[{type:"FunctionCall",params:{methodName:"storage_deposit",args:{account_id:input.recipient,registration_only:true},gas:"30000000000000",deposit:input.minimumDeposit}}]});
+  if(result&&typeof result==="object"){
+    const value=result as Record<string,unknown>;
+    const rootStatus=value.status&&typeof value.status==="object"?value.status as Record<string,unknown>:{};
+    const outcome=value.transaction_outcome&&typeof value.transaction_outcome==="object"?value.transaction_outcome as Record<string,unknown>:{};
+    const nested=outcome.outcome&&typeof outcome.outcome==="object"?outcome.outcome as Record<string,unknown>:{};
+    const nestedStatus=nested.status&&typeof nested.status==="object"?nested.status as Record<string,unknown>:{};
+    if("Failure" in rootStatus||"Failure" in nestedStatus)throw new Error("The wallet transaction failed while registering the token recipient. The transfer was not sent.");
+  }
+  return result;
+}
 export async function registerRheaRoute(input:{accountId:string;missingTokens:string[];missingStorage:Array<{token:string;accountId:string}>}):Promise<void>{
   if(!activeWallet?.signAndSendTransaction)throw new Error("The connected wallet does not support NEAR transactions.");
   const uniqueTokens=[...new Set(input.missingTokens)];
