@@ -98,32 +98,6 @@ export function FlywheelScreen({accountId,nativeBalance,busy,onConnect,onStake,s
       </section>}
 
       <section className="flywheel-card">
-        <div className="section-heading compact"><div><p className="eyebrow">POCKET NEAR ATTRIBUTION</p><h2>Routed via Pocket Near (24h)</h2></div></div>
-        <div className="flywheel-primary-metrics">
-          <div><span>Successful matched volume</span><strong>{usd(overview.pocketNear.volumeUsd24h)}</strong></div>
-          <div><span>Successful matched swaps</span><strong>{number(overview.pocketNear.successfulTxCount24h)}</strong></div>
-          <div><span>Success rate of Explorer matches</span><strong>{(overview.pocketNear.successRate24h*100).toFixed(1)}%</strong></div>
-        </div>
-        <p className="flywheel-note">Explorer matches across all statuses: {number(overview.pocketNear.matchedTxCount24h)}.</p>
-        {overview.pocketNear.matchedTxCount24h===0&&<p className="flywheel-note">No saved Pocket Near deposit address/memo matched an Explorer row in this window. This does not prove that no swaps were attempted.</p>}
-        <p className="flywheel-note">Attributed only when an Explorer deposit address and memo exactly match a saved Pocket Near swap. Volume uses Explorer amountInUsd for SUCCESS rows.</p>
-        <div className="flywheel-columns">
-          <div><h3>Top matched pairs</h3>{overview.pocketNear.byPair.length?<ul>{overview.pocketNear.byPair.slice(0,5).map(row=><li key={row.pair}><span>{row.pair}</span><strong>{compactUsd(row.volumeUsd)} · {number(row.successTxCount)}/{number(row.txCount)} success</strong></li>)}</ul>:<p className="flywheel-note">No matched pairs in this sample.</p>}</div>
-          <div><h3>Matched source chains</h3>{overview.pocketNear.bySourceChain.length?<ul>{overview.pocketNear.bySourceChain.slice(0,5).map(row=><li key={row.sourceChain}><span>{row.sourceChain}</span><strong>{compactUsd(row.volumeUsd)} · {number(row.successTxCount)}/{number(row.txCount)} success</strong></li>)}</ul>:<p className="flywheel-note">No matched source-chain data in this sample.</p>}</div>
-        </div>
-      </section>
-
-      <section className="flywheel-card">
-        <div className="section-heading compact"><div><p className="eyebrow">POCKET NEAR FUNNEL</p><h2>Saved swaps started in this 24h window</h2></div></div>
-        <div className="flywheel-funnel">
-          <div><span>Started</span><strong>{number(overview.pocketNear.funnel.started24h)}</strong></div>
-          <div><span>Deposit hash submitted</span><strong>{number(overview.pocketNear.funnel.depositHashSubmitted24h)}</strong></div>
-          <div><span>Saved status: SUCCESS</span><strong>{number(overview.pocketNear.funnel.successful24h)}</strong></div>
-        </div>
-        <p className="flywheel-note">Provider status can change after the snapshot; counts describe saved Pocket Near swap records, not all quotes.</p>
-      </section>
-
-      <section className="flywheel-card">
         <div className="section-heading compact"><div><p className="eyebrow">NETWORK-WIDE SCENARIO, NOT OBSERVED DEMAND</p><h2>10× NEAR-demand model</h2></div></div>
         <p className="flywheel-note">Uses the Explorer's network-wide rolling 24-hour volume across all integrators—not just swaps routed through Pocket Near. Multiplies that market baseline by your scale factor and assumed NEAR conversion share. This is a hypothetical market-size scenario, not Pocket Near volume or measured NEAR buying demand.</p>
         <div className="flywheel-assumptions">

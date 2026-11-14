@@ -454,6 +454,26 @@ app.get("/api/assets",asyncRoute(async (_req,res) => {
   res.json({assets});
 }));
 
+app.get("/api/tokenized-stocks",asyncRoute(async (_req,res)=>{
+  const response=await fetch(`${env.ONE_CLICK_BASE_URL}/v0/tokens`,{signal:AbortSignal.timeout(10_000)});
+  if(!response.ok)return fail(res,502,"The supported tokenized stock catalog is temporarily unavailable.");
+  const payload:unknown=await response.json();
+  if(!Array.isArray(payload))return fail(res,502,"The supported tokenized stock catalog returned an invalid response.");
+  const stockNames:Record<string,string>={NVDA:"NVIDIA",TSLA:"Tesla",AAPL:"Apple",GOOGL:"Alphabet",META:"Meta",MSFT:"Microsoft",AMZN:"Amazon",SPY:"S&P 500 ETF",QQQ:"Nasdaq 100 ETF",HOOD:"Robinhood",INTC:"Intel",MRVL:"Marvell",CRCL:"Circle"};
+  const stocks=payload.flatMap((raw)=>{
+    if(!raw||typeof raw!=="object"||Array.isArray(raw))return [];
+    const item=raw as Record<string,unknown>,symbol=String(item.symbol??"").toUpperCase();
+    const match=/^([A-Z]+)ON$/.exec(symbol),ticker=match?.[1];
+    const status=String(item.status??item.state??"").toLowerCase();
+    if(!ticker||!stockNames[ticker]||!String(item.assetId??"")||item.deprecated===true||item.isDeprecated===true||item.is_deprecated===true||status==="deprecated")return [];
+    const priceValue=item.priceUsd??item.price_usd??item.price;
+    const priceUsd=priceValue===null||priceValue===undefined||!Number.isFinite(Number(priceValue))?null:Number(priceValue);
+    return [{assetId:String(item.assetId),ticker,name:stockNames[ticker]!,symbol,blockchain:String(item.blockchain??""),decimals:Number(item.decimals),priceUsd}];
+  }).filter(stock=>Number.isInteger(stock.decimals)&&stock.decimals>=0&&stock.decimals<=30).sort((a,b)=>a.name.localeCompare(b.name));
+  res.setHeader("Cache-Control","public, max-age=60, stale-while-revalidate=240");
+  res.json({stocks,source:"NEAR Intents 1-Click supported-token catalog",updatedAt:new Date().toISOString()});
+}));
+
 app.post("/api/near/token-storage",requireSession,asyncRoute(async(req,res)=>{
   const body=z.object({assetId:z.string().min(1).max(160),recipient:z.string().min(2).max(64)}).safeParse(req.body);
   if(!body.success)return fail(res,400,"A supported NEAR token and recipient account are required.");
@@ -477,7 +497,7 @@ app.post("/api/near/token-storage",requireSession,asyncRoute(async(req,res)=>{
 }));
 
 app.get("/api/rhea/pools",requireSession,asyncRoute(async(_req,res)=>{
-  try{const markets=await getRheaMarkets();res.setHeader("Cache-Control","private, max-age=45");res.json({markets,source:"GeckoTerminal Rhea pools + Rhea on-chain frozen-token list",updatedAt:new Date().toISOString(),coverage:"Tokens in the first five Rhea pool pages sorted by 24-hour volume"});}
+  try{const markets=await getRheaMarkets();res.setHeader("Cache-Control","private, max-age=180");res.json({markets,source:"GeckoTerminal GT-verified Rhea pools + Rhea on-chain frozen-token list",updatedAt:new Date().toISOString(),coverage:"Verified, unfrozen tokens in the first five Rhea pool pages sorted by 24-hour volume"});}
   catch(error){fail(res,(error as {status?:number}).status??502,"Rhea pool market data is temporarily unavailable.");}
 }));
 
@@ -588,7 +608,7 @@ app.post("/api/swaps/start",requireSession,asyncRoute(async(req,res)=>{
 
 app.get("/api/swaps",requireSession,asyncRoute(async(req,res)=>{
   await pool.query(`UPDATE intent_swaps SET status='EXPIRED',status_details=COALESCE(status_details,'{}'::jsonb)||jsonb_build_object('expiredAt',now(),'expiryReason','quote expired before a deposit transaction was recorded'),updated_at=now()
-    WHERE user_id=$1 AND status='PENDING_DEPOSIT' AND deposit_tx_hash IS NULL AND CASE WHEN quote->>'expiresAt' ~ '^\\d{4}-\\d{2}-\\d{2}T' THEN (quote->>'expiresAt')::timestamptz<=now() ELSE false END`,[req.userId]);
+    WHERE user_id=$1 AND status='PENDING_DEPOSIT' AND deposit_tx_hash IS NULL AND (created_at<=now()-interval '10 minutes' OR CASE WHEN quote->>'expiresAt' ~ '^\\d{4}-\\d{2}-\\d{2}T' THEN (quote->>'expiresAt')::timestamptz<=now() ELSE false END)`,[req.userId]);
   const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20",[req.userId]);
   res.setHeader("Cache-Control","no-store");
   res.json({swaps:result.rows.map(presentIntentSwap)});
@@ -634,9 +654,9 @@ app.get("/api/swaps/:id/status",requireSession,asyncRoute(async(req,res)=>{
   const result=await pool.query<IntentSwapRow>("SELECT id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at FROM intent_swaps WHERE id=$1 AND user_id=$2",[id.data,req.userId]);
   if(!result.rowCount)return fail(res,404,"Swap was not found for this account.");
   let swap=result.rows[0]!;
-  const isExpiredPending=swap.status==="PENDING_DEPOSIT"&&!swap.deposit_tx_hash&&Date.parse(swap.quote.expiresAt)<=Date.now();
+  const isExpiredPending=swap.status==="PENDING_DEPOSIT"&&!swap.deposit_tx_hash&&(Date.parse(swap.quote.expiresAt)<=Date.now()||Date.now()-new Date(swap.created_at).getTime()>=10*60_000);
   if(isExpiredPending){
-    const expired=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status='EXPIRED',status_details=COALESCE(status_details,'{}'::jsonb)||jsonb_build_object('expiredAt',now(),'expiryReason','quote expired before a deposit transaction was recorded'),updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId]);
+    const expired=await pool.query<IntentSwapRow>("UPDATE intent_swaps SET status='EXPIRED',status_details=COALESCE(status_details,'{}'::jsonb)||jsonb_build_object('expiredAt',now(),'expiryReason','unsent quote expired or exceeded the 10-minute pending window'),updated_at=now() WHERE id=$1 AND user_id=$2 RETURNING id,quote_id,quote,origin_chain,origin_token_contract,deposit_address,deposit_memo,status,deposit_tx_hash,status_details,created_at,updated_at",[id.data,req.userId]);
     swap=expired.rows[0]!;
     if(req.query.checkExpired!=="1"){res.setHeader("Cache-Control","no-store");return res.json({swap:presentIntentSwap(swap)});}
   }

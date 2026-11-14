@@ -5,7 +5,7 @@ const obj=(value:unknown):Obj=>value&&typeof value==="object"&&!Array.isArray(va
 const text=(value:unknown)=>typeof value==="string"||typeof value==="number"?String(value):"";
 const num=(value:unknown):number|null=>{const result=Number(value);return Number.isFinite(result)?result:null;};
 
-export type RheaMarket={assetId:string;symbol:string;name:string;decimals:number;blockchain:"near";poolAddress:string;poolName:string;poolType:string|null;poolFeePct:number|null;priceUsd:number|null;liquidityUsd:number|null;volume24hUsd:number|null;trades24h:number|null;priceChange24hPct:number|null;frozen:boolean|null;poolUrl:string};
+export type RheaMarket={assetId:string;symbol:string;name:string;decimals:number;blockchain:"near";poolAddress:string;poolName:string;poolType:string|null;poolFeePct:number|null;priceUsd:number|null;liquidityUsd:number|null;volume24hUsd:number|null;trades24h:number|null;priceChange24hPct:number|null;frozen:boolean|null;verified:boolean;poolUrl:string};
 export type RheaPoolSignal={poolAddress:string;poolName:string;poolType:string|null;contracts:string[];symbols:string[];poolFeePct:number|null;liquidityUsd:number|null;volume24hUsd:number|null;trades24h:number|null;priceChange24hPct:number|null;poolUrl:string};
 
 let marketCache:{until:number;markets:RheaMarket[];pools:RheaPoolSignal[]}|undefined;
@@ -19,6 +19,18 @@ export async function getRheaMarkets():Promise<RheaMarket[]>{
   })),getRheaFrozenTokenSet()]);
   const pools=pages.flatMap(page=>Array.isArray(page.data)?page.data:[]),included=pages.flatMap(page=>Array.isArray(page.included)?page.included.map(obj):[]);
   const tokenById=new Map(included.filter(row=>obj(row.attributes).address).map(row=>[text(row.id),obj(row.attributes)]));
+  const verificationCandidates=[...new Set(pools.flatMap(entry=>{
+    const rels=obj(obj(entry).relationships);
+    return [text(obj(obj(rels.base_token).data).id),text(obj(obj(rels.quote_token).data).id)].map(id=>text(tokenById.get(id)?.address)).filter(Boolean);
+  }))].slice(0,30);
+  let tokenInfoByAddress=new Map<string,Obj>();
+  if(verificationCandidates.length){
+    try{
+      const url=`https://api.geckoterminal.com/api/v2/networks/near/tokens/multi/${verificationCandidates.map(encodeURIComponent).join(",")}`;
+      const response=await fetch(url,{headers:{accept:"application/json;version=20230302"},signal:AbortSignal.timeout(12_000)});
+      if(response.ok){const data=obj(await response.json());tokenInfoByAddress=new Map((Array.isArray(data.data)?data.data:[]).map(row=>obj(row)).map(row=>obj(row.attributes)).filter(attrs=>text(attrs.address)).map(attrs=>[text(attrs.address).toLowerCase(),attrs]));}
+    }catch{/* Fail closed: absent verification metadata excludes the token. */}
+  }
   const result:RheaMarket[]=[];
   const poolSignals:RheaPoolSignal[]=[];
   for(const entry of pools){
@@ -31,18 +43,19 @@ export async function getRheaMarkets():Promise<RheaMarket[]>{
     const poolType=/\b(ALMM|CLMM|STABLE|AMM)\b/i.exec(poolName)?.[1]?.toUpperCase()??null;
     const baseAddress=text(base?.address),quoteAddress=text(quote?.address);
     const poolUrl=`https://www.geckoterminal.com/near/rhea-finance/pools/${encodeURIComponent(poolAddress)}`;
-    if(baseAddress&&quoteAddress&&liquidity!==null&&liquidity>0)poolSignals.push({poolAddress,poolName,poolType,contracts:[baseAddress,quoteAddress],symbols:[text(base?.symbol)||baseAddress,text(quote?.symbol)||quoteAddress],poolFeePct:feePct,liquidityUsd:liquidity,volume24hUsd:num(volume.h24),trades24h:(num(obj(transactions.h24).buys)??0)+(num(obj(transactions.h24).sells)??0),priceChange24hPct:num(change.h24),poolUrl});
+    if(baseAddress&&quoteAddress&&tokenInfoByAddress.get(baseAddress.toLowerCase())?.gt_verified===true&&tokenInfoByAddress.get(quoteAddress.toLowerCase())?.gt_verified===true&&frozenTokens!==null&&!frozenTokens.has(baseAddress.toLowerCase())&&!frozenTokens.has(quoteAddress.toLowerCase())&&liquidity!==null&&liquidity>0)poolSignals.push({poolAddress,poolName,poolType,contracts:[baseAddress,quoteAddress],symbols:[text(base?.symbol)||baseAddress,text(quote?.symbol)||quoteAddress],poolFeePct:feePct,liquidityUsd:liquidity,volume24hUsd:num(volume.h24),trades24h:(num(obj(transactions.h24).buys)??0)+(num(obj(transactions.h24).sells)??0),priceChange24hPct:num(change.h24),poolUrl});
     for(const [token,other] of [[base,quote],[quote,base]] as const){
       if(!token)continue;
       const address=text(token.address);if(!address)continue;
       const symbol=text(token.symbol)||address.slice(0,12),name=text(token.name)||symbol,decimals=num(token.decimals);
       const frozen=frozenTokens===null?null:frozenTokens.has(address.toLowerCase());
-      const record:RheaMarket={assetId:`near:${address}`,symbol,name,decimals:decimals!==null&&Number.isInteger(decimals)&&decimals>=0&&decimals<=30?decimals:24,blockchain:"near",poolAddress,poolName:text(attrs.name)||`${symbol}/${text(other?.symbol)||"token"}`,poolType,poolFeePct:feePct,priceUsd:num(token.price_usd),liquidityUsd:liquidity,volume24hUsd:num(volume.h24),trades24h:(num(obj(transactions.h24).buys)??0)+(num(obj(transactions.h24).sells)??0),priceChange24hPct:num(change.h24),frozen,poolUrl};
-      if(liquidity!==null&&liquidity>0)result.push(record);
+      const verified=tokenInfoByAddress.get(address.toLowerCase())?.gt_verified===true;
+      const record:RheaMarket={assetId:`near:${address}`,symbol,name,decimals:decimals!==null&&Number.isInteger(decimals)&&decimals>=0&&decimals<=30?decimals:24,blockchain:"near",poolAddress,poolName:text(attrs.name)||`${symbol}/${text(other?.symbol)||"token"}`,poolType,poolFeePct:feePct,priceUsd:num(token.price_usd),liquidityUsd:liquidity,volume24hUsd:num(volume.h24),trades24h:(num(obj(transactions.h24).buys)??0)+(num(obj(transactions.h24).sells)??0),priceChange24hPct:num(change.h24),frozen,verified,poolUrl};
+      if(verified&&frozen===false&&liquidity!==null&&liquidity>0)result.push(record);
     }
   }
   const best=new Map<string,RheaMarket>();for(const market of result){const current=best.get(market.assetId);if(!current||(market.volume24hUsd??0)>(current.volume24hUsd??0))best.set(market.assetId,market);}
-  marketCache={until:Date.now()+60_000,markets:[...best.values()].sort((a,b)=>(b.volume24hUsd??0)-(a.volume24hUsd??0)).slice(0,100),pools:poolSignals};
+  marketCache={until:Date.now()+180_000,markets:[...best.values()].sort((a,b)=>(b.volume24hUsd??0)-(a.volume24hUsd??0)).slice(0,100),pools:poolSignals};
   return marketCache.markets;
 }
 

@@ -22,6 +22,7 @@ export interface MemeBoardAsset extends Asset {
   trades24h?: number | null;
   priceChange24hPct?: number | null;
   frozen?: boolean | null;
+  verified?: boolean;
   poolUrl?: string;
 }
 export interface MemeBoard {
