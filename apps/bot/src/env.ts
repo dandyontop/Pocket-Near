@@ -13,7 +13,7 @@ const schema = z.object({
   ONE_CLICK_JWT: z.string().default(""), ONE_CLICK_BASE_URL: z.string().url().default("https://1click.chaindefuser.com"),
   NEARAI_API_KEY: z.string().default(""),
   EXPLORER_JWT: z.string().default(""),
-  NEAR_RPC_URL: z.string().url().default("https://rpc.mainnet.near.org"),
+  NEAR_RPC_URL: z.string().url().default("https://free.rpc.fastnear.com"),
   ALLOWED_ORIGINS: z.string().default("http://localhost:5173"),
   QUOTE_CACHE_TTL_SECONDS: z.coerce.number().int().min(1).max(300).default(20),
   MAX_INIT_DATA_AGE_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),

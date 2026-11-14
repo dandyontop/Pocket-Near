@@ -447,7 +447,9 @@ app.get("/api/assets",asyncRoute(async (_req,res) => {
     const status=String(v.status??v.state??"").toLowerCase();
     return {assetId:String(v.assetId ?? ""),symbol:String(v.symbol ?? ""),name:String(v.name ?? ""),decimals:Number(v.decimals),blockchain:String(v.blockchain ?? ""),deprecated:v.deprecated===true||v.isDeprecated===true||v.is_deprecated===true||status==="deprecated"||/\bdeprecated\b/i.test(`${String(v.symbol??"")} ${String(v.name??"")}`)};
   }).filter(a => a.assetId && a.symbol && a.blockchain.toLowerCase()==="near"&&!a.deprecated&&Number.isInteger(a.decimals) && a.decimals >= 0 && a.decimals <= 30).map(({deprecated:_deprecated,...asset})=>asset).slice(0,1000);
-  try{for(const market of await getRheaMarkets())if(market.frozen!==true&&!/\bdeprecated\b/i.test(`${market.symbol} ${market.name}`)&&!assets.some(asset=>asset.assetId===market.assetId))assets.push({assetId:market.assetId,symbol:market.symbol,name:market.name,decimals:market.decimals,blockchain:"near"});}catch{/* The supported NEAR asset list remains usable when the Rhea market index is down. */}
+  // Native NEAR is a wallet balance, not an FT entry in the 1-Click catalog.
+  // Add it explicitly so users can select and see their NEAR balance for swaps.
+  if(!assets.some(asset=>asset.assetId==="near:native"))assets.push({assetId:"near:native",symbol:"NEAR",name:"NEAR",decimals:24,blockchain:"near"});
   res.setHeader("Cache-Control","public, max-age=60, stale-while-revalidate=240");
   res.json({assets});
 }));
