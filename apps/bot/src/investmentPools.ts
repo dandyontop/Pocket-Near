@@ -20,7 +20,7 @@ export type NearStablePool={
 type AssetMeta={assetId:string;symbol:string;decimals:number;blockchain:string};
 type RawPool={id:number|string;tokenIds?:string[];supplies?:Record<string,string>;fee?:number;pool_kind?:string};
 type PoolIndex={block_number?:number;block_time?:number;simplePools?:RawPool[];ratedPools?:RawPool[];unRatedPools?:RawPool[]};
-type PoolCache={until:number;value:{pools:NearStablePool[];updatedAt:string;source:string}};
+type PoolCache={until:number;value:{pools:NearStablePool[];updatedAt:string;source:string;warning?:string}};
 let poolCache:PoolCache|undefined;
 let poolRequest:Promise<{pools:NearStablePool[];updatedAt:string;source:string}>|undefined;
 const nowIso=()=>new Date().toISOString();
@@ -92,6 +92,12 @@ async function loadPools():Promise<{pools:NearStablePool[];updatedAt:string;sour
   return poolRequest;
 }
 
-export async function getNearStablePools():Promise<{pools:NearStablePool[];updatedAt:string;source:string}>{
-  return loadPools();
+export async function getNearStablePools():Promise<{pools:NearStablePool[];updatedAt:string;source:string;warning?:string}>{
+  try{return await loadPools();}
+  catch(error){
+    const warning=error instanceof Error?error.message:"Rhea pool opportunities are temporarily unavailable.";
+    const value={pools:[],updatedAt:nowIso(),source:"Rhea pool index",warning};
+    poolCache={until:Date.now()+30_000,value};
+    return value;
+  }
 }

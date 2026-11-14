@@ -31,7 +31,7 @@ const toBase=(value:string,decimals:number)=>{const [whole="0",fraction=""]=valu
 const short=(s:string)=>s.length>24?`${s.slice(0,10)}…${s.slice(-8)}`:s;
 const DEFAULT_WINDOW={days:[0,1,2,3,4,5,6],start:"00:00",end:"23:59",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC"};
 const ASSET_DAYS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-const assetOptionLabel=(asset:Asset)=>`${asset.symbol} · ${asset.blockchain}${asset.assetId.startsWith("near:")?" · Rhea pool":" · Intents"}`;
+const assetOptionLabel=(asset:Asset)=>`${asset.symbol} · ${asset.blockchain}`;
 const usd=(n:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumSignificantDigits:6}).format(n);
 const compactUsd=(n:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:2}).format(n);
 const nearTransactionHash=(value:unknown):string|undefined=>{
@@ -70,6 +70,9 @@ export default function App(){
   const [quote,setQuote]=useState<QuoteView|null>(null);
   const [decision,setDecision]=useState<{allowed:boolean;reason?:string}|null>(null);
   const [balanceCheck,setBalanceCheck]=useState<{supported:boolean;symbol:string;amount:string|null;decimals:number;nativeBalance:string|null;nativeReserve:string}|null>(null);
+  const [swapBalances,setSwapBalances]=useState<Record<string,string>>({});
+  const [swapBalancesLoading,setSwapBalancesLoading]=useState(false);
+  const [swapBalancesError,setSwapBalancesError]=useState("");
   const [repricing,setRepricing]=useState<{swapId:string;previewOutput:string}|null>(null);
   const [repriceAccepted,setRepriceAccepted]=useState(false);
   const [intentSwaps,setIntentSwaps]=useState<IntentSwap[]>([]);
@@ -124,11 +127,26 @@ export default function App(){
   const [rheaRiskAcknowledged,setRheaRiskAcknowledged]=useState(false);
   const [now,setNow]=useState(()=>Date.now());
   const [watchLoading,setWatchLoading]=useState(false);
+  const [sentimentRefreshVersion,setSentimentRefreshVersion]=useState(0);
   const [executionStatus,setExecutionStatus]=useState<{kind:"submitted"|"error";message:string;txHash?:string;state?:"pending"|"success"|"failure"}|null>(null);
   const activePolicyCount=policies.filter(saved=>saved.active).length;
   const editorPolicy=policies.find(saved=>saved.id===editingPolicyId)?.body??policy;
   const from=useMemo(()=>assets.find(a=>a.assetId===fromId),[assets,fromId]);
   const to=useMemo(()=>assets.find(a=>a.assetId===toId),[assets,toId]);
+  const ownedSwapAssets=useMemo(()=>assets.filter(asset=>{
+    const amount=swapBalances[asset.assetId];
+    return amount!==undefined&&/^\d+$/.test(amount)&&BigInt(amount)>0n;
+  }).sort((left,right)=>{
+    const leftAmount=Number(swapBalances[left.assetId]??0)/10**left.decimals;
+    const rightAmount=Number(swapBalances[right.assetId]??0)/10**right.decimals;
+    return rightAmount-leftAmount||left.symbol.localeCompare(right.symbol);
+  }),[assets,swapBalances]);
+  const ownedSwapAssetIds=new Set(ownedSwapAssets.map(asset=>asset.assetId));
+  const otherSwapAssets=assets.filter(asset=>!ownedSwapAssetIds.has(asset.assetId));
+  const renderSwapAssetOptions=()=> <>
+    {ownedSwapAssets.length>0&&<optgroup label="Available in your wallet">{ownedSwapAssets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetOptionLabel(asset)} · {fmt(swapBalances[asset.assetId]!,asset.decimals)} available</option>)}</optgroup>}
+    <optgroup label="Other supported NEAR tokens">{otherSwapAssets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetOptionLabel(asset)}</option>)}</optgroup>
+  </>;
   const rheaRiskAssets=quote?.provider==="rhea"?[quote.originAsset,quote.destinationAsset].map(assetId=>memeBoard.assets.find(asset=>asset.assetId===assetId)??null):[];
   const rheaRiskMessages=rheaRiskAssets.flatMap((asset,index)=>asset?getRheaMarketRiskFlags(asset).map(flag=>`${asset.symbol}: ${flag}`):[`No current market-risk data for ${index===0?from?.symbol??"origin token":to?.symbol??"destination token"}.`]);
   const rheaRiskNeedsAcknowledgement=quote?.provider==="rhea"&&rheaRiskMessages.length>0;
@@ -409,6 +427,19 @@ export default function App(){
   };
   const refreshEvents=async()=>{try{setEvents((await api.events()).events);}catch(e){setError(e instanceof Error?e.message:"Could not refresh activity.");}};
   const refreshPositions=async()=>{setPositionsLoading(true);setPositionsError("");try{const result=await api.positions();setPositions(result.positions);setPositionsCoverage(result.coverage);setRnearStatus(result.rnear??null);}catch(e){setPositionsError(e instanceof Error?e.message:"Could not load NEAR positions.");}finally{setPositionsLoading(false);}};
+  const refreshSwapBalances=async()=>{
+    if(!account||!assets.length)return;
+    const nearAssetIds=assets.filter(asset=>asset.blockchain.toLowerCase()==="near").map(asset=>asset.assetId);
+    if(!nearAssetIds.length)return;
+    setSwapBalancesLoading(true);setSwapBalancesError("");
+    try{
+      const result=await api.assetBalances(nearAssetIds);
+      const owned:Record<string,string>={};
+      for(const balance of result.balances)if(balance.supported&&balance.amount&&/^\d+$/.test(balance.amount)&&BigInt(balance.amount)>0n)owned[balance.assetId]=balance.amount;
+      setSwapBalances(owned);
+    }catch(e){setSwapBalancesError(e instanceof Error?e.message:"Wallet token balances could not be refreshed.");}
+    finally{setSwapBalancesLoading(false);}
+  };
   const rememberIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setIntentSwaps(current=>[swap,...current.filter(item=>item.id!==swap.id)]);};
   const selectIntentSwap=(swap:IntentSwap)=>{setActiveIntentSwap(swap);setSwapStatusError("");};
   const refreshIntentSwaps=async()=>{setSwapStatusError("");try{const result=await api.intentSwaps();setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:current);}catch(e){setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");}};
@@ -457,7 +488,7 @@ export default function App(){
     }catch(e){const message=e instanceof Error?e.message:"The NEAR deposit was not submitted.";setExecutionStatus({kind:"error",message});setError(message);}
     finally{setBusy(false);}
   };
-  const refreshInvestmentOpportunities=async()=>{try{const result=await api.investmentOpportunities();setInvestmentOpportunities(result.pools);setInvestmentOpportunitySource(result.source);setInvestmentOpportunityDisclaimer(result.disclaimer);setYieldOverview(result.yields);}catch(e){setInvestmentOpportunitySource(e instanceof Error?e.message:"Opportunity data is temporarily unavailable.");}};
+  const refreshInvestmentOpportunities=async()=>{try{const result=await api.investmentOpportunities();setInvestmentOpportunities(result.pools);setInvestmentOpportunitySource((result as typeof result&{warning?:string}).warning??result.source);setInvestmentOpportunityDisclaimer(result.disclaimer);setYieldOverview(result.yields);}catch(e){setInvestmentOpportunitySource(e instanceof Error?e.message:"Opportunity data is temporarily unavailable.");}};
   const saveInvestmentPrefs=async()=>{setSavingInvestmentPrefs(true);try{const result=await api.saveInvestmentPreferences({alertsEnabled:investmentPrefs.alertsEnabled,symbols:investmentPrefs.symbols,positionMonitoring:investmentPrefs.positionMonitoring,reportFrequency:investmentPrefs.reportFrequency});setInvestmentPrefs(result.preferences);setNotice("Investment alerts and position reporting settings saved.");}catch(e){setError(e instanceof Error?e.message:"Could not save investment settings.");}finally{setSavingInvestmentPrefs(false);}};
   const safeToggleAgent=async()=>{if(!policy||!policyActive){setError("Sign at least one active policy before activating the agent.");setTab("Profile");return;}try{const next=!agentOn;await api.agentSettings({agentEnabled:next});setAgentOn(next);setNotice(next?"Agent monitoring. Matches are notified on Telegram.":"Agent paused.");}catch(e){setError(e instanceof Error?e.message:"Could not update agent state.");}};
   const toggleMasterLock=async(unlockPassword?:string)=>{const next=!masterLock;const settings=await api.agentSettings({masterLock:next,...(unlockPassword?{password:unlockPassword}:{})});setMasterLock(settings.masterLock);setNotice(next?"Agent locked.":"Agent unlocked.");};
@@ -465,6 +496,7 @@ export default function App(){
   const loadPrices=async()=>{setWatchLoading(true);try{const [market,watch,alertData]=await Promise.all([api.prices(),api.watchlist(),api.alerts()]);setPrices(market.rows);setPriceSource(market.source);setWatchlist(watch.symbols);setAlerts(alertData.alerts);}catch(e){setError(e instanceof Error?e.message:"Market data could not be loaded.");}finally{setWatchLoading(false);}};
   const loadDiscover=async()=>{setDiscoverLoading(true);setDiscoverError("");try{const [earnData,appData,gameData]=await Promise.all([api.earn(),api.apps(),api.games()]);setEarn(earnData.protocols);setEarnSource(earnData.source);setApps(appData.apps);setGames(gameData.games);}catch(e){const message=e instanceof Error?e.message:"Explore data could not be loaded.";setDiscoverError(message);setError(message);}finally{setDiscoverLoading(false);}};
   const loadMemeBoard=async()=>{try{setMemeBoard(await api.memeBoard());setMemeBoardError("");}catch(e){const message=e instanceof Error?e.message:"Meme asset data could not be loaded.";setMemeBoardError(message);setError(message);}};
+  useEffect(()=>{if(tab==="Swap"&&account&&assetsReady)void refreshSwapBalances();},[tab,account?.accountId,assetsReady,assets]);
   useEffect(()=>{if(!account){setIntentSwaps([]);setActiveIntentSwap(null);return;}let active=true;void api.intentSwaps().then(result=>{if(!active)return;setIntentSwaps(result.swaps);setActiveIntentSwap(current=>current?result.swaps.find(item=>item.id===current.id)??current:result.swaps[0]??null);}).catch(e=>{if(active)setSwapStatusError(e instanceof Error?e.message:"Could not load your saved Intents swaps.");});return()=>{active=false;};},[account?.accountId]);
   useEffect(()=>{
     const pending=intentSwaps.filter(swap=>["PENDING_DEPOSIT","KNOWN_DEPOSIT_TX","PROCESSING"].includes(swap.status));
@@ -504,7 +536,7 @@ export default function App(){
         <div className="discover-segments explore-categories" role="tablist" aria-label="Explore categories">
           {(["Markets","Earn","Apps & games","Agents"] as const).map(category=><button key={category} role="tab" aria-selected={exploreSection===category} className={exploreSection===category?"active":""} onClick={()=>setExploreSection(category)}>{category}</button>)}
         </div>
-        {exploreSection==="Markets"&&<><Suspense fallback={<div className="empty-activity">Loading markets…</div>}><MarketPlaceScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} nearPrice={prices.find(price=>price.symbol.toUpperCase()==="NEAR")?.priceUsd??null} assets={assets} prices={prices} loading={watchLoading} onRefresh={()=>void loadPrices()} onSwap={swapPair} memeBoard={memeBoard} memeBoardError={memeBoardError} onVoteMeme={(assetId,vote)=>void voteMeme(assetId,vote)} watchlist={watchlist} onToggleWatch={symbol=>void toggleWatch(symbol)} onTradePrice={tradePrice}/></Suspense>
+        {exploreSection==="Markets"&&<><Suspense fallback={<div className="empty-activity">Loading markets…</div>}><MarketPlaceScreen accountId={account?.accountId??null} nativeBalance={nativeBalance} nearPrice={prices.find(price=>price.symbol.toUpperCase()==="NEAR")?.priceUsd??null} assets={assets} prices={prices} loading={watchLoading} sentimentRefreshVersion={sentimentRefreshVersion} onRefresh={()=>{void loadPrices();setSentimentRefreshVersion(version=>version+1);}} onSwap={swapPair} memeBoard={memeBoard} memeBoardError={memeBoardError} onVoteMeme={(assetId,vote)=>void voteMeme(assetId,vote)} watchlist={watchlist} onToggleWatch={symbol=>void toggleWatch(symbol)} onTradePrice={tradePrice}/></Suspense>
         <section className="form-card">
           <div className="section-heading compact"><div><p className="eyebrow">PRICE ALERTS</p><h2>Create an alert</h2></div><Bell size={17}/></div>
           <div className="form-grid"><label className="field">Asset<select value={alertSymbol} onChange={event=>setAlertSymbol(event.target.value)}>{prices.map(price=><option key={price.id} value={price.symbol}>{price.symbol}</option>)}</select></label><label className="field">Condition<select value={alertOp} onChange={event=>setAlertOp(event.target.value as "gte"|"lte")}><option value="gte">At or above</option><option value="lte">At or below</option></select></label></div>
@@ -527,8 +559,9 @@ export default function App(){
           <section className="quote-card swap-flow">
             <div className="swap-step-indicator"><span className={swapStep==="edit"?"active":""}>1 · Enter swap</span><span className={swapStep==="review"?"active":""}>2 · Review quote</span></div>
             {swapStep==="edit"&&<>
-            <div className="routebook-route-caption"><span>INTENT ROUTE</span><span>Origin <i aria-hidden="true"/> Destination</span></div>
-            <div className="pair-line"><div className="asset-select"><select value={fromId} disabled={busy} onChange={event=>{setFromId(event.target.value);clearActiveQuote();}} aria-label="Origin asset">{assets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetOptionLabel(asset)}</option>)}</select><ChevronDown size={14}/></div><button className="swap-directions" aria-label="Reverse pair" disabled={busy} onClick={()=>{setFromId(toId);setToId(fromId);clearActiveQuote();}}><ArrowDownUp size={16}/></button><div className="asset-select"><select value={toId} disabled={busy} onChange={event=>{setToId(event.target.value);clearActiveQuote();}} aria-label="Destination asset">{assets.map(asset=><option key={asset.assetId} value={asset.assetId}>{assetOptionLabel(asset)}</option>)}</select><ChevronDown size={14}/></div></div>
+            <div className="routebook-route-caption"><span>NEAR ASSETS</span><span>Origin <i aria-hidden="true"/> Destination</span></div>
+            <div className="balance-sort-row"><span>{swapBalancesLoading?"Refreshing wallet balances…":`${ownedSwapAssets.length} supported token${ownedSwapAssets.length===1?"":"s"} available in your wallet`}{swapBalancesError&&<small>{swapBalancesError}</small>}</span><button className="secondary-button" type="button" onClick={()=>void refreshSwapBalances()} disabled={swapBalancesLoading||!account}>{swapBalancesLoading?<span className="loader small"/>:"Refresh balances"}</button></div>
+            <div className="pair-line"><div className="asset-select"><select value={fromId} disabled={busy} onChange={event=>{setFromId(event.target.value);clearActiveQuote();}} aria-label="Origin asset">{renderSwapAssetOptions()}</select><ChevronDown size={14}/></div><button className="swap-directions" aria-label="Reverse pair" disabled={busy} onClick={()=>{setFromId(toId);setToId(fromId);clearActiveQuote();}}><ArrowDownUp size={16}/></button><div className="asset-select"><select value={toId} disabled={busy} onChange={event=>{setToId(event.target.value);clearActiveQuote();}} aria-label="Destination asset">{renderSwapAssetOptions()}</select><ChevronDown size={14}/></div></div>
               <label className="amount-label">Amount<input inputMode="decimal" value={amount} disabled={busy} onChange={event=>{setAmount(event.target.value);clearActiveQuote();}} aria-label="Amount"/><span>{from?.symbol??""}</span></label>
               {Number(maxSlippage)>100&&<p className="flywheel-note">High slippage tolerance: {(Number(maxSlippage)/100).toFixed(2)}%. Your swap may execute at a lower output; review the minimum output before continuing.</p>}
               {to&&to.blockchain.toLowerCase()!=="near"&&<label className="field chain-address">Destination address · {to.blockchain}<input value={recipient} disabled={busy} onChange={event=>{setRecipient(event.target.value);clearActiveQuote();}} placeholder={`Your ${to.blockchain} address`} autoComplete="off"/></label>}

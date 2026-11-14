@@ -40,15 +40,19 @@ function tableRows<T extends Record<string,unknown>>(table:Table|undefined):T[]{
   });
 }
 
-export async function getRheaPositions(accountId:string):Promise<{positions:RheaPosition[];height:number|null;source:string;rnear:{apyPct:number|null;ftPrice:number|null;stakedNear:string;pendingNear:string;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null;source:string;observedAt:string}}>{
-  const response=await fetch("https://api.intea.rs/balances",{
-    method:"POST",headers:{accept:"application/json","content-type":"application/json"},
-    body:JSON.stringify({account:accountId,sources:["rhea"],token_fields:["symbol","decimals","price_usd"]}),
-    signal:AbortSignal.timeout(10_000),
-  });
-  if(!response.ok)throw new Error(`Intear Rhea balance service returned ${response.status}.`);
-  const data=await response.json() as RheaBalancesResponse;
-  if(data.errors?.rhea)throw new Error(data.errors.rhea.message||"Rhea balances are temporarily unavailable.");
+export async function getRheaPositions(accountId:string):Promise<{positions:RheaPosition[];height:number|null;source:string;indexerWarning:string|null;rnear:{apyPct:number|null;ftPrice:number|null;stakedNear:string;pendingNear:string;canWithdraw:boolean|null;estimatedUnlockAtMs:number|null;source:string;observedAt:string}}>{
+  let data:RheaBalancesResponse={};
+  let indexerWarning:string|null=null;
+  try{
+    const response=await fetch("https://api.intea.rs/balances",{
+      method:"POST",headers:{accept:"application/json","content-type":"application/json"},
+      body:JSON.stringify({account:accountId,sources:["rhea"],token_fields:["symbol","decimals","price_usd"]}),
+      signal:AbortSignal.timeout(10_000),
+    });
+    if(!response.ok)throw new Error(`Rhea deposit index returned ${response.status}.`);
+    data=await response.json() as RheaBalancesResponse;
+    if(data.errors?.rhea)throw new Error(data.errors.rhea.message||"Rhea deposit index is temporarily unavailable.");
+  }catch(error){indexerWarning=error instanceof Error?error.message:"Rhea deposit index is temporarily unavailable.";data={};}
   const metadata=new Map<string,{symbol:string;decimals:number;price:number|null}>();
   for(const row of tableRows<Record<string,unknown>>(data.tokens)){
     const tokenId=String(row.account_id??row.token??"");
@@ -92,5 +96,5 @@ export async function getRheaPositions(accountId:string):Promise<{positions:Rhea
   if(BigInt(pendingRaw)>0n)sdkPositions.push({id:`rnear:pending:${accountId}`,tokenId:rnearContract,symbol:"NEAR (pending rNEAR unstake)",amount:pendingRaw,decimals:24,valueUsd:null,kind:"rnear_pending",nearEquivalent:pendingAmount,canWithdraw:typeof account.can_withdraw==="boolean"?account.can_withdraw:null,estimatedUnlockAtMs:null});
   const apy=typeof apyRaw.data==="string"&&Number.isFinite(Number(apyRaw.data))?Number(apyRaw.data):null;
   const canWithdraw=typeof account.can_withdraw==="boolean"?account.can_withdraw:null;
-  return {positions:[...positions,...sdkPositions],height:typeof data.height==="number"?data.height:null,source:"Intear indexed Rhea deposits + Rhea rnear-sdk contract views",rnear:{apyPct:apy,ftPrice:ftPrice?Number(ftPrice):null,stakedNear:stakedAmount,pendingNear:pendingAmount,canWithdraw,estimatedUnlockAtMs:null,source:"Rhea rnear-sdk views on lst.rhealab.near",observedAt:new Date().toISOString()}};
+  return {positions:[...positions,...sdkPositions],height:typeof data.height==="number"?data.height:null,source:"Rhea rnear-sdk contract views + Intear indexed deposits when available",indexerWarning,rnear:{apyPct:apy,ftPrice:ftPrice?Number(ftPrice):null,stakedNear:stakedAmount,pendingNear:pendingAmount,canWithdraw,estimatedUnlockAtMs:null,source:"Rhea rnear-sdk views on lst.rhealab.near",observedAt:new Date().toISOString()}};
 }

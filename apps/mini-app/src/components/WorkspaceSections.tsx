@@ -157,6 +157,7 @@ type MarketPlaceScreenProps = {
   assets: Asset[];
   prices: PriceRow[];
   loading: boolean;
+  sentimentRefreshVersion:number;
   onRefresh: () => void;
   onSwap: (from: string, to: string) => void;
   memeBoard: MemeBoard;
@@ -171,24 +172,24 @@ const usd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",curren
 const compactUsd=(value:number)=>new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",notation:"compact",maximumFractionDigits:2}).format(value);
 const fmtExact=(amount:string,decimals:number)=>{try{const value=BigInt(amount),base=10n**BigInt(decimals);if(decimals===0)return value.toString();const fraction=(value%base).toString().padStart(decimals,"0").replace(/0+$/g,"");return fraction?`${value/base}.${fraction}`:(value/base).toString();}catch{return amount;}};
 
-function FearGreedMeter(){
+function FearGreedMeter({refreshVersion}:{refreshVersion:number}){
   const [sentiment,setSentiment]=useState<MarketSentiment|null>(null);
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(false);
   const refresh=async()=>{
     setLoading(true);setError("");
-    try{setSentiment(await api.marketSentiment());}
+    try{setSentiment(await api.marketSentiment(true));}
     catch(e){setError(e instanceof Error?e.message:"The sentiment index is unavailable.");}
     finally{setLoading(false);}
   };
-  useEffect(()=>{void refresh();},[]);
+  useEffect(()=>{void refresh();},[refreshVersion]);
   return <article className="sentiment-card">
     <div className="section-heading compact"><div><p className="eyebrow">MARKET SENTIMENT</p><h2>Fear &amp; Greed</h2></div><button className="icon-button light" aria-label="Refresh market sentiment" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={15}/></button></div>
     {sentiment?<><div className="sentiment-value"><strong>{sentiment.value}</strong><span>/ 100</span></div><div className="sentiment-track" role="meter" aria-label="Fear and Greed index score" aria-valuemin={0} aria-valuemax={100} aria-valuenow={sentiment.value}><span style={{width:`${sentiment.value}%`}}/></div><small>Index observation: {new Date(sentiment.observedAt).toLocaleString()}</small><small>Last checked: {new Date(sentiment.updatedAt).toLocaleString()}</small><small>Source: Alternative.me · broad crypto-market index, not a NEAR-specific reading.</small>{error&&<div className="execution-status error"><span>Could not refresh; showing the previous reading. {error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>}</>:error?<div className="execution-status error"><span>{error}</span><button className="secondary-button" onClick={()=>void refresh()} disabled={loading}>Retry</button></div>:<div className="empty-activity"><span className="loader"/><span>Loading latest index…</span></div>}
   </article>;
 }
 
-export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,prices,loading,onRefresh,onSwap,memeBoard,memeBoardError,onVoteMeme,watchlist,onToggleWatch,onTradePrice}:MarketPlaceScreenProps){
+export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,prices,loading,sentimentRefreshVersion,onRefresh,onSwap,memeBoard,memeBoardError,onVoteMeme,watchlist,onToggleWatch,onTradePrice}:MarketPlaceScreenProps){
   const [section,setSection]=useState<"prices"|"memes">("prices");
   const [priceSearch,setPriceSearch]=useState("");
   const [hideRiskFlagged,setHideRiskFlagged]=useState(false);
@@ -196,7 +197,7 @@ export function MarketPlaceScreen({accountId,nativeBalance,nearPrice,assets,pric
   return <section className="page-title">
     <div className="watch-heading"><div><p className="eyebrow">EXPLORE · MARKETS</p><h1>Markets</h1></div><button className="icon-button light" aria-label="Refresh market data" onClick={onRefresh} disabled={loading}><RefreshCw size={15}/></button></div>
     <p>Live token prices and observable Rhea market data.</p>
-    <FearGreedMeter/>
+    <FearGreedMeter refreshVersion={sentimentRefreshVersion}/>
     <ThesisFeature accountId={accountId} nativeBalance={nativeBalance} nearPrice={nearPrice}/>
     <div className="watch-secondary">
       <div className="watch-segments" role="tablist" aria-label="Watch data"><button role="tab" aria-selected={section==="prices"} className={section==="prices"?"active":""} onClick={()=>setSection("prices")}>Market prices</button><button role="tab" aria-selected={section==="memes"} className={section==="memes"?"active":""} onClick={()=>setSection("memes")}>Rhea NEAR markets</button></div>

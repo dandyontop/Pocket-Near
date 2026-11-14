@@ -128,15 +128,16 @@ app.get("/api/positions",requireSession,asyncRoute(async(req,res)=>{
   const user=(await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId])).rows[0];
   if(!user?.account_id)return res.json({positions:[],source:"Intear indexed Rhea deposits",height:null,coverage:"Connect a NEAR wallet to detect Rhea deposits."});
   const result=await getRheaPositions(user.account_id);
-  res.setHeader("Cache-Control","private, max-age=60");
-  res.json({...result,coverage:"Rhea internal token deposits and rNEAR liquid staking are tracked. Rhea farm-staked positions and concentrated-liquidity NFT positions are not currently included. rNEAR unlock time is unavailable when the contract view does not expose an estimate."});
+  res.setHeader("Cache-Control","private, no-store");
+  res.json({...result,coverage:`Rhea internal token deposits and rNEAR liquid staking are tracked. Rhea farm-staked positions and concentrated-liquidity NFT positions are not currently included. rNEAR unlock time is unavailable when the contract view does not expose an estimate.${result.indexerWarning?` Indexed deposit details are temporarily unavailable: ${result.indexerWarning} On-chain rNEAR staking balances are still shown.`:""}`});
 }));
 
 app.get("/api/prices",asyncRoute(async(_req,res)=>{
   const data=await getPrices();res.setHeader("Cache-Control","public, max-age=30");res.json(data);
 }));
 app.get("/api/market/sentiment",asyncRoute(async(_req,res)=>{
-  try{const data=await getMarketSentiment();res.setHeader("Cache-Control","public, max-age=300");res.json(data);}
+  const refresh=_req.query.refresh==="1";
+  try{const data=await getMarketSentiment({refresh});res.setHeader("Cache-Control",refresh?"no-store":"public, max-age=300");res.json(data);}
   catch(error){if(error instanceof MarketSentimentError)return fail(res,503,error.message);throw error;}
 }));
 app.get("/api/network/overview",asyncRoute(async(_req,res)=>{
@@ -443,9 +444,10 @@ app.get("/api/assets",asyncRoute(async (_req,res) => {
   if (!Array.isArray(data)) return fail(res,502,"Supported asset directory returned an invalid response.");
   const assets = data.map((item) => {
     const v = item as Record<string,unknown>;
-    return {assetId:String(v.assetId ?? ""),symbol:String(v.symbol ?? ""),name:String(v.name ?? ""),decimals:Number(v.decimals),blockchain:String(v.blockchain ?? "")};
-  }).filter(a => a.assetId && a.symbol && Number.isInteger(a.decimals) && a.decimals >= 0 && a.decimals <= 30).slice(0,1000);
-  try{for(const market of await getRheaMarkets())if(!assets.some(asset=>asset.assetId===market.assetId))assets.push({assetId:market.assetId,symbol:market.symbol,name:market.name,decimals:market.decimals,blockchain:"near"});}catch{/* The main Intents asset list remains usable when the market index is down. */}
+    const status=String(v.status??v.state??"").toLowerCase();
+    return {assetId:String(v.assetId ?? ""),symbol:String(v.symbol ?? ""),name:String(v.name ?? ""),decimals:Number(v.decimals),blockchain:String(v.blockchain ?? ""),deprecated:v.deprecated===true||v.isDeprecated===true||v.is_deprecated===true||status==="deprecated"||/\bdeprecated\b/i.test(`${String(v.symbol??"")} ${String(v.name??"")}`)};
+  }).filter(a => a.assetId && a.symbol && a.blockchain.toLowerCase()==="near"&&!a.deprecated&&Number.isInteger(a.decimals) && a.decimals >= 0 && a.decimals <= 30).map(({deprecated:_deprecated,...asset})=>asset).slice(0,1000);
+  try{for(const market of await getRheaMarkets())if(market.frozen!==true&&!/\bdeprecated\b/i.test(`${market.symbol} ${market.name}`)&&!assets.some(asset=>asset.assetId===market.assetId))assets.push({assetId:market.assetId,symbol:market.symbol,name:market.name,decimals:market.decimals,blockchain:"near"});}catch{/* The supported NEAR asset list remains usable when the Rhea market index is down. */}
   res.setHeader("Cache-Control","public, max-age=60, stale-while-revalidate=240");
   res.json({assets});
 }));
@@ -696,6 +698,32 @@ app.get("/api/asset-balance",requireSession,asyncRoute(async(req,res)=>{
   }else amount=native.available;
   res.setHeader("Cache-Control","private, no-store");
   res.json({supported:true,assetId:assetId.data,symbol,decimals,amount,nativeBalance:native.available,nativeReserve:"20000000000000000000000"});
+}));
+
+app.post("/api/asset-balances",requireSession,asyncRoute(async(req,res)=>{
+  const parsed=z.object({assetIds:z.array(z.string().min(1).max(160)).min(1).max(160)}).safeParse(req.body);
+  if(!parsed.success)return fail(res,400,"Choose a valid set of assets before checking balances.");
+  const user=await pool.query<{account_id:string|null}>("SELECT account_id FROM users WHERE id=$1",[req.userId]);
+  const accountId=user.rows[0]?.account_id;
+  if(!accountId)return fail(res,409,"Connect your NEAR wallet to check balances.");
+  const uniqueIds=[...new Set(parsed.data.assetIds)];
+  let nativeAmount:string|null=null;
+  try{nativeAmount=(await readNativeNearBalance(accountId)).available;}catch{/* Individual token reads can still succeed if native balance is unavailable. */}
+  const balances=await Promise.all(uniqueIds.map(async assetId=>{
+    const rheaContract=assetId.startsWith("near:")?assetId.slice(5):null;
+    const token=rheaContract?undefined:await getSupportedToken(assetId);
+    if(!token&&!rheaContract)return {assetId,supported:false,amount:null as string|null};
+    if((token?.blockchain??"near").toLowerCase()!=="near")return {assetId,supported:false,amount:null as string|null};
+    const contractId=token?.contractAddress??rheaContract;
+    if(!contractId||contractId==="native"||assetId==="near:native"||(!token?.contractAddress&&token?.symbol.toUpperCase()==="NEAR"))return {assetId,supported:nativeAmount!==null,amount:nativeAmount};
+    if(!/^[a-z0-9_-]+(?:[.-][a-z0-9_-]+)*$/.test(contractId))return {assetId,supported:false,amount:null as string|null};
+    try{
+      const raw=await nearProvider.callFunction({contractId,method:"ft_balance_of",args:{account_id:accountId}});
+      return {assetId,supported:typeof raw==="string"&&/^\d+$/.test(raw),amount:typeof raw==="string"&&/^\d+$/.test(raw)?raw:null};
+    }catch{return {assetId,supported:false,amount:null as string|null};}
+  }));
+  res.setHeader("Cache-Control","private, no-store");
+  res.json({balances});
 }));
 
 app.get("/api/events",requireSession,asyncRoute(async (req,res) => {

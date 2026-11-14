@@ -7,8 +7,8 @@ export class MarketSentimentError extends Error {
   constructor(){super("The market sentiment index is temporarily unavailable.");this.name="MarketSentimentError";}
 }
 
-export async function getMarketSentiment():Promise<MarketSentiment>{
-  if(cache&&cache.until>Date.now())return cache.value;
+export async function getMarketSentiment(options:{refresh?:boolean}={}):Promise<MarketSentiment>{
+  if(!options.refresh&&cache&&cache.until>Date.now())return cache.value;
   try{
     const response=await fetch("https://api.alternative.me/fng/?limit=1&format=json",{signal:AbortSignal.timeout(8_000)});
     if(!response.ok)throw new Error(`Fear & Greed provider returned HTTP ${response.status}.`);
